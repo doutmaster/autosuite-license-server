@@ -1,6 +1,7 @@
 import os
 from datetime import datetime, timedelta, timezone
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, Form
+
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -55,7 +56,12 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
     )
 
 @app.post("/admin/company/create")
-def admin_create_company(request: Request, name: str, allowed_domain: str | None = None, db: Session = Depends(get_db)):
+def admin_create_company(
+    request: Request,
+    name: str = Form(...),
+    allowed_domain: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     c = Company(name=name.strip(), allowed_domain=(allowed_domain.strip() if allowed_domain else None))
     db.add(c)
@@ -63,7 +69,13 @@ def admin_create_company(request: Request, name: str, allowed_domain: str | None
     return {"ok": True, "company_id": c.id}
 
 @app.post("/admin/version/create")
-def admin_create_version(request: Request, version: str, channel: str = "stable", notes: str | None = None, db: Session = Depends(get_db)):
+def admin_create_version(
+    request: Request,
+    version: str = Form(...),
+    channel: str = Form("stable"),
+    notes: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     v = ScriptVersion(version=version.strip(), channel=channel.strip().lower(), notes=notes)
     db.add(v)
@@ -71,7 +83,13 @@ def admin_create_version(request: Request, version: str, channel: str = "stable"
     return {"ok": True}
 
 @app.post("/admin/license/create")
-def admin_create_license(request: Request, company_id: int, days: int = 30, max_devices: int = 2, db: Session = Depends(get_db)):
+def admin_create_license(
+    request: Request,
+    company_id: int = Form(...),
+    days: int = Form(30),
+    max_devices: int = Form(2),
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     comp = db.get(Company, company_id)
     if not comp:
@@ -83,8 +101,14 @@ def admin_create_license(request: Request, company_id: int, days: int = 30, max_
     db.commit()
     return {"ok": True, "license_key": key, "expires_at": exp.isoformat()}
 
+
 @app.post("/admin/license/extend")
-def admin_extend_license(request: Request, license_key: str, days: int = 30, db: Session = Depends(get_db)):
+def admin_extend_license(
+    request: Request,
+    license_key: str = Form(...),
+    days: int = Form(30),
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
@@ -96,7 +120,11 @@ def admin_extend_license(request: Request, license_key: str, days: int = 30, db:
     return {"ok": True, "expires_at": lic.expires_at.isoformat()}
 
 @app.post("/admin/license/block")
-def admin_block_license(request: Request, license_key: str, db: Session = Depends(get_db)):
+def admin_block_license(
+    request: Request,
+    license_key: str = Form(...),
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
@@ -105,18 +133,28 @@ def admin_block_license(request: Request, license_key: str, db: Session = Depend
     db.commit()
     return {"ok": True}
 
+
 @app.post("/admin/company/update_control")
-def admin_update_control(request: Request, company_id: int, channel: str | None = None, pinned_version: str | None = None, force_update: bool | None = None, db: Session = Depends(get_db)):
+def admin_update_control(
+    request: Request,
+    company_id: int = Form(...),
+    channel: str | None = Form(None),
+    pinned_version: str | None = Form(None),
+    force_update: str | None = Form(None),  # "true"/"false"/None
+    db: Session = Depends(get_db),
+):
     require_admin(request)
     comp = db.get(Company, company_id)
     if not comp:
         raise HTTPException(404, "company not found")
 
-    if channel is not None:
+    if channel is not None and channel.strip():
         comp.channel = channel.strip().lower()
-    comp.pinned_version = pinned_version.strip() if pinned_version else None
-    if force_update is not None:
-        comp.force_update = bool(force_update)
+
+    comp.pinned_version = pinned_version.strip() if pinned_version and pinned_version.strip() else None
+
+    if force_update is not None and force_update.strip():
+        comp.force_update = (force_update.strip().lower() == "true")
 
     db.commit()
     return {"ok": True}
