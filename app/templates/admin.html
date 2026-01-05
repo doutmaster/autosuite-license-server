@@ -20,6 +20,9 @@
 
   <h3>Create Company</h3>
   <form class="row" method="post" action="/admin/company/create">
+
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="name" placeholder="Company name" required />
     <input name="allowed_domain" placeholder="Allowed domain (optional) e.g. my.munja-trans.at" />
     <button>Create</button>
@@ -27,6 +30,9 @@
 
   <h3>Create Script Version</h3>
   <form class="row" method="post" action="/admin/version/create">
+
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="version" placeholder="e.g. 3.2.0" required />
     <select name="channel">
       <option value="stable">stable</option>
@@ -38,6 +44,8 @@
 
   <h3>Create License</h3>
   <form class="row" method="post" action="/admin/license/create">
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="company_id" placeholder="Company ID" required />
     <input name="days" placeholder="Days (e.g. 30)" value="30" />
     <input name="max_devices" placeholder="Max devices" value="2" />
@@ -46,6 +54,8 @@
 
   <h3>Extend License</h3>
   <form class="row" method="post" action="/admin/license/extend">
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="license_key" placeholder="AS_xxx" required />
     <input name="days" placeholder="Days add" value="30" />
     <button>Extend</button>
@@ -53,12 +63,16 @@
 
   <h3>Block License</h3>
   <form class="row" method="post" action="/admin/license/block">
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="license_key" placeholder="AS_xxx" required />
     <button>Block</button>
   </form>
 
   <h3>Update Control (per company)</h3>
   <form class="row" method="post" action="/admin/company/update_control">
+<input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+
     <input name="company_id" placeholder="Company ID" required />
     <select name="channel">
       <option value="">(no change)</option>
