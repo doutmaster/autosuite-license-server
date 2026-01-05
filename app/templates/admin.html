@@ -706,18 +706,31 @@
           <div class="tabpane" id="tab-licenses" style="display:none;">
             <table id="tbl-licenses">
               <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th style="width:110px;">Company ID</th>
-                  <th>License key</th>
-                  <th style="width:110px;">Active</th>
-                  <th>Expires</th>
-                  <th style="width:110px;">Devices</th>
-                </tr>
-              </thead>
+  <tr>
+    <th style="width:70px;">ID</th>
+    <th style="width:110px;">Company ID</th>
+    <th>License key</th>
+    <th style="width:110px;">Active</th>
+    <th>Expires</th>
+    <th style="width:110px;">Devices</th>
+    <th style="width:300px;">Actions</th>
+  </tr>
+</thead>
+
               <tbody>
                 {% for l in licenses %}
                   <tr>
+<td><code>{{ l.max_devices }}</code></td>
+<td>
+  <div style="display:flex; gap:8px; flex-wrap:wrap;">
+    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="30">+30</button>
+    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="90">+90</button>
+    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="180">+180</button>
+    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="365">+365</button>
+    <button class="btn bad js-block" type="button" data-key="{{ l.license_key }}">Block</button>
+  </div>
+</td>
+
                     <td><code>{{ l.id }}</code></td>
                     <td><code>{{ l.company_id }}</code></td>
                     <td>
@@ -909,6 +922,80 @@
       }catch{
         toast('bad', 'Health failed', 'Could not reach server.');
       }
+
+<script>
+  // --- helper: read token from URL ---
+  function getToken() {
+    const u = new URL(location.href);
+    return u.searchParams.get('token') || '';
+  }
+
+  // --- helper: POST form data (x-www-form-urlencoded) ---
+  async function postForm(path, dataObj) {
+    const token = getToken();
+    const body = new URLSearchParams();
+    for (const [k, v] of Object.entries(dataObj)) body.append(k, String(v));
+
+    // token is checked via query param in your backend
+    const url = token ? `${path}?token=${encodeURIComponent(token)}` : path;
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString()
+    });
+
+    let payload = null;
+    try { payload = await res.json(); } catch {}
+    if (!res.ok) {
+      const msg = payload?.detail ? JSON.stringify(payload.detail) : (payload ? JSON.stringify(payload) : `HTTP ${res.status}`);
+      throw new Error(msg);
+    }
+    return payload;
+  }
+
+  // --- One-click extend buttons ---
+  document.querySelectorAll('.js-extend').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-key');
+      const days = btn.getAttribute('data-days');
+
+      if (!key || !days) return;
+
+      // optional confirm (remove if you want it instant)
+      if (!confirm(`Extend this license by ${days} days?\n\n${key}`)) return;
+
+      try {
+        toast('warn', 'Extending…', `+${days} days`);
+        const out = await postForm('/admin/license/extend', { license_key: key, days });
+        toast('good', 'Extended', out?.expires_at ? `New expiry: ${out.expires_at}` : 'Done');
+        // simplest refresh so table updates
+        setTimeout(() => location.reload(), 600);
+      } catch (e) {
+        toast('bad', 'Extend failed', String(e.message || e));
+      }
+    });
+  });
+
+  // --- One-click block buttons ---
+  document.querySelectorAll('.js-block').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const key = btn.getAttribute('data-key');
+      if (!key) return;
+
+      if (!confirm(`Block this license NOW?\n\n${key}`)) return;
+
+      try {
+        toast('warn', 'Blocking…', key);
+        await postForm('/admin/license/block', { license_key: key });
+        toast('good', 'Blocked', 'License is now blocked');
+        setTimeout(() => location.reload(), 600);
+      } catch (e) {
+        toast('bad', 'Block failed', String(e.message || e));
+      }
+    });
+  });
+</script>
     });
   </script>
 </body>
