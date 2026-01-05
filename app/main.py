@@ -1,6 +1,6 @@
 import os
 from datetime import timedelta
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException, Request, Form
 
@@ -51,12 +51,22 @@ def root():
 def admin_page(request: Request, db: Session = Depends(get_db)):
     require_admin(request)
     companies = db.execute(select(Company).order_by(Company.id.desc())).scalars().all()
-    licenses = db.execute(select(License).order_by(License.id.desc())).scalars().all()
-    versions = db.execute(select(ScriptVersion).order_by(ScriptVersion.id.desc())).scalars().all()
-    return templates.TemplateResponse(
-        "admin.html",
-        {"request": request, "companies": companies, "licenses": licenses, "versions": versions, "base_url": BASE_URL}
+   # Licenses + device counts
+rows = db.execute(
+    select(
+        License,
+        func.count(Device.id).label("device_count")
     )
+    .outerjoin(Device, Device.license_id == License.id)
+    .group_by(License.id)
+    .order_by(License.id.desc())
+).all()
+
+licenses = []
+for lic, device_count in rows:
+    # attach count so the template can use l.device_count
+    lic.device_count = int(device_count or 0)
+    licenses.append(lic)
 
 @app.post("/admin/company/create")
 def admin_create_company(
@@ -177,6 +187,25 @@ def admin_delete_license(
 
     if not lic:
         raise HTTPException(status_code=404, detail="license not found")
+
+@app.post("/admin/license/reset_devices")
+def admin_reset_devices(
+    request: Request,
+    license_key: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    lic = db.execute(
+        select(License).where(License.license_key == license_key.strip())
+    ).scalars().first()
+
+    if not lic:
+        raise HTTPException(status_code=404, detail="license not found")
+
+    db.execute(delete(Device).where(Device.license_id == lic.id))
+    db.commit()
+    return {"ok": True}
 
     # Hard delete: remove devices first, then license
     db.execute(delete(Device).where(Device.license_id == lic.id))
