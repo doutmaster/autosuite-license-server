@@ -46,11 +46,7 @@ def pick_allowed_version(db: Session, company: Company) -> str:
     )
 
     if not row:
-        row = (
-            db.execute(select(ScriptVersion).order_by(ScriptVersion.id.desc()))
-            .scalars()
-            .first()
-        )
+        row = db.execute(select(ScriptVersion).order_by(ScriptVersion.id.desc())).scalars().first()
 
     return row.version if row else "3.2.0"
 
@@ -67,7 +63,7 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
     companies = db.execute(select(Company).order_by(Company.id.desc())).scalars().all()
     versions = db.execute(select(ScriptVersion).order_by(ScriptVersion.id.desc())).scalars().all()
 
-    # ✅ Licenses + device counts (MUST be inside route where db exists)
+    # ✅ Licenses + device counts (MUST be inside this function where db exists)
     rows = db.execute(
         select(
             License,
@@ -80,10 +76,9 @@ def admin_page(request: Request, db: Session = Depends(get_db)):
 
     licenses = []
     for lic, device_count in rows:
-        lic.device_count = int(device_count or 0)  # for admin.html devices column
+        lic.device_count = int(device_count or 0)  # used by admin.html "Devices" column
         licenses.append(lic)
 
-    # base_url for the admin template display (doesn't affect script_url logic)
     base_url = str(request.base_url).rstrip("/")
 
     return templates.TemplateResponse(
@@ -162,11 +157,7 @@ def admin_extend_license(
     db: Session = Depends(get_db),
 ):
     require_admin(request)
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
         raise HTTPException(404, "license not found")
 
@@ -184,11 +175,7 @@ def admin_block_license(
     db: Session = Depends(get_db),
 ):
     require_admin(request)
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
         raise HTTPException(404, "license not found")
 
@@ -205,44 +192,18 @@ def admin_adjust_license(
     db: Session = Depends(get_db),
 ):
     require_admin(request)
-
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
         raise HTTPException(status_code=404, detail="license not found")
 
     lic.expires_at = lic.expires_at + timedelta(days=days_delta)
 
-    # Safety: don't allow expiry < now (remove if you want to allow past)
+    # Optional safety: prevent setting expiry earlier than "now"
     if lic.expires_at < now_utc():
         lic.expires_at = now_utc()
 
     db.commit()
     return {"ok": True, "expires_at": lic.expires_at.isoformat()}
-
-
-@app.post("/admin/license/reset_devices")
-def admin_reset_devices(
-    request: Request,
-    license_key: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    require_admin(request)
-
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
-    if not lic:
-        raise HTTPException(status_code=404, detail="license not found")
-
-    db.execute(delete(Device).where(Device.license_id == lic.id))
-    db.commit()
-    return {"ok": True}
 
 
 @app.post("/admin/license/delete")
@@ -252,18 +213,29 @@ def admin_delete_license(
     db: Session = Depends(get_db),
 ):
     require_admin(request)
-
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
         raise HTTPException(status_code=404, detail="license not found")
 
     # Hard delete: remove devices first, then license
     db.execute(delete(Device).where(Device.license_id == lic.id))
     db.execute(delete(License).where(License.id == lic.id))
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/admin/license/reset_devices")
+def admin_reset_devices(
+    request: Request,
+    license_key: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
+    if not lic:
+        raise HTTPException(status_code=404, detail="license not found")
+
+    db.execute(delete(Device).where(Device.license_id == lic.id))
     db.commit()
     return {"ok": True}
 
@@ -301,11 +273,7 @@ def api_check(
     host: str | None = None,
     db: Session = Depends(get_db),
 ):
-    lic = (
-        db.execute(select(License).where(License.license_key == license_key.strip()))
-        .scalars()
-        .first()
-    )
+    lic = db.execute(select(License).where(License.license_key == license_key.strip())).scalars().first()
     if not lic:
         return {"active": False, "reason": "invalid_license"}
 
@@ -322,16 +290,9 @@ def api_check(
     if comp.allowed_domain and host and comp.allowed_domain.lower() not in host.lower():
         return {"active": False, "reason": "domain_not_allowed"}
 
-    existing = (
-        db.execute(
-            select(Device).where(
-                Device.license_id == lic.id,
-                Device.device_id == device_id,
-            )
-        )
-        .scalars()
-        .first()
-    )
+    existing = db.execute(
+        select(Device).where(Device.license_id == lic.id, Device.device_id == device_id)
+    ).scalars().first()
 
     if not existing:
         count = db.execute(select(func.count(Device.id)).where(Device.license_id == lic.id)).scalar_one()
@@ -340,14 +301,16 @@ def api_check(
         db.add(Device(license_id=lic.id, device_id=device_id))
         db.commit()
     else:
-        existing.last_seen_at = now_utc()
-        db.commit()
+        # If your Device model has last_seen_at, keep this; if not, remove these 2 lines.
+        if hasattr(existing, "last_seen_at"):
+            existing.last_seen_at = now_utc()
+            db.commit()
 
     allowed_version = pick_allowed_version(db, comp)
     latest = db.execute(select(ScriptVersion).order_by(ScriptVersion.id.desc())).scalars().first()
     latest_version = latest.version if latest else allowed_version
 
-    # script_url: prefer env BASE_URL if set, otherwise relative
+    # Prefer env BASE_URL if set, otherwise relative
     script_url = f"{BASE_URL}/scripts/{allowed_version}/core.js" if BASE_URL else f"/scripts/{allowed_version}/core.js"
 
     return {
