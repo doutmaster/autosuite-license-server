@@ -1,1002 +1,281 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>AutoSuite Admin — ICHKOV</title>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>AutoSuite Admin — ICHKOV</title>
 
-  <!-- Modern system font stack -->
-  <style>
-    :root{
-      --bg: #0b1220;
-      --panel: rgba(255,255,255,0.06);
-      --panel2: rgba(255,255,255,0.09);
-      --stroke: rgba(255,255,255,0.10);
-      --text: rgba(255,255,255,0.92);
-      --muted: rgba(255,255,255,0.70);
-      --muted2: rgba(255,255,255,0.55);
-
-      --primary: #6ee7ff;
-      --primary2:#7c3aed;
-      --good:#22c55e;
-      --warn:#f59e0b;
-      --bad:#ef4444;
-
-      --shadow: 0 12px 40px rgba(0,0,0,0.35);
-      --radius: 18px;
-      --radius2: 14px;
-    }
-
-    *{ box-sizing:border-box; }
-    html,body{ height:100%; }
-    body{
-      margin:0;
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
-      color: var(--text);
-      background:
-        radial-gradient(900px 600px at 15% 10%, rgba(124,58,237,0.22), transparent 60%),
-        radial-gradient(700px 500px at 80% 0%, rgba(110,231,255,0.18), transparent 55%),
-        radial-gradient(700px 700px at 60% 90%, rgba(34,197,94,0.10), transparent 55%),
-        var(--bg);
-    }
-
-    a{ color:inherit; text-decoration:none; }
-    .wrap{
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 28px 18px 60px;
-    }
-
-    /* Top bar */
-    .topbar{
-      display:flex;
-      gap:16px;
-      align-items:center;
-      justify-content:space-between;
-      margin-bottom:18px;
-    }
-
-    .brand{
-      display:flex;
-      gap:14px;
-      align-items:center;
-      min-width: 280px;
-    }
-
-    .logo{
-      width:44px;
-      height:44px;
-      border-radius: 14px;
-      background:
-        linear-gradient(135deg, rgba(110,231,255,0.95), rgba(124,58,237,0.95));
-      box-shadow: 0 10px 26px rgba(124,58,237,0.25);
-      position:relative;
-      overflow:hidden;
-    }
-    .logo:before{
-      content:"";
-      position:absolute; inset:-30px;
-      background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.35), transparent 45%);
-      transform: rotate(18deg);
-    }
-    .brandtext{
-      display:flex;
-      flex-direction:column;
-      line-height:1.05;
-    }
-    .brandtext .title{
-      font-size: 16px;
-      font-weight: 800;
-      letter-spacing: 0.2px;
-    }
-    .brandtext .sub{
-      font-size: 12.5px;
-      color: var(--muted);
-    }
-
-    .righttools{
-      display:flex;
-      gap:10px;
-      align-items:center;
-      flex-wrap:wrap;
-      justify-content:flex-end;
-    }
-
-    .pill{
-      display:flex;
-      align-items:center;
-      gap:10px;
-      padding: 10px 12px;
-      border-radius: 999px;
-      background: rgba(255,255,255,0.06);
-      border:1px solid var(--stroke);
-      box-shadow: 0 10px 30px rgba(0,0,0,0.18);
-      backdrop-filter: blur(10px);
-      max-width: 520px;
-    }
-
-    .pill code{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New";
-      font-size:12px;
-      color: rgba(255,255,255,0.86);
-      white-space:nowrap;
-      overflow:hidden;
-      text-overflow:ellipsis;
-    }
-
-    .btn{
-      appearance:none;
-      border: 1px solid var(--stroke);
-      background: rgba(255,255,255,0.08);
-      color: var(--text);
-      padding: 10px 12px;
-      border-radius: 12px;
-      cursor:pointer;
-      font-weight: 650;
-      letter-spacing: 0.2px;
-      transition: transform .08s ease, background .15s ease, border-color .15s ease;
-      user-select:none;
-    }
-    .btn:hover{ background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.16); }
-    .btn:active{ transform: translateY(1px); }
-    .btn.primary{
-      border: none;
-      background: linear-gradient(135deg, rgba(110,231,255,0.95), rgba(124,58,237,0.95));
-      box-shadow: 0 14px 36px rgba(124,58,237,0.24);
-    }
-    .btn.good{ background: rgba(34,197,94,0.16); border-color: rgba(34,197,94,0.30); }
-    .btn.warn{ background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.30); }
-    .btn.bad{ background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.30); }
-
-    /* Layout grid */
-    .grid{
-      display:grid;
-      grid-template-columns: 420px 1fr;
-      gap: 16px;
-      align-items:start;
-    }
-    @media (max-width: 1020px){
-      .grid{ grid-template-columns: 1fr; }
-      .brand{ min-width:unset; }
-      .pill{ max-width: unset; width:100%; }
-      .righttools{ width:100%; }
-    }
-
-    .card{
-      background: linear-gradient(180deg, var(--panel), rgba(255,255,255,0.04));
-      border: 1px solid var(--stroke);
-      border-radius: var(--radius);
-      box-shadow: var(--shadow);
-      overflow:hidden;
-      backdrop-filter: blur(10px);
-    }
-    .card .hd{
-      padding: 14px 16px;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      display:flex;
-      align-items:center;
-      justify-content:space-between;
-      gap: 10px;
-    }
-    .card .hd h3{
-      margin:0;
-      font-size: 14px;
-      letter-spacing: 0.2px;
-    }
-    .card .hd .hint{
-      font-size:12px;
-      color: var(--muted);
-    }
-    .card .bd{ padding: 14px 16px 16px; }
-
-    .section{
-      display:flex;
-      flex-direction:column;
-      gap: 14px;
-    }
-
-    .form{
-      display:flex;
-      flex-direction:column;
-      gap: 10px;
-      padding: 12px;
-      border-radius: 14px;
-      background: rgba(255,255,255,0.05);
-      border: 1px solid rgba(255,255,255,0.08);
-    }
-    .row{
-      display:grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 10px;
-    }
-    @media (max-width: 520px){
-      .row{ grid-template-columns: 1fr; }
-    }
-
-    label{
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      font-size: 12.5px;
-      color: var(--muted);
-    }
-    input, select, textarea{
-      width: 100%;
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.20);
-      color: var(--text);
-      outline: none;
-      transition: border-color .15s ease, background .15s ease;
-    }
-    input:focus, select:focus, textarea:focus{
-      border-color: rgba(110,231,255,0.55);
-      background: rgba(0,0,0,0.28);
-    }
-    textarea{ min-height: 84px; resize: vertical; }
-
-    .actions{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-      align-items:center;
-      justify-content:flex-end;
-      margin-top:2px;
-    }
-
-    .divider{
-      height:1px;
-      background: rgba(255,255,255,0.08);
-      margin: 10px 0;
-    }
-
-    /* Tables area */
-    .tabs{
-      display:flex;
-      gap:8px;
-      flex-wrap:wrap;
-      margin-bottom: 10px;
-    }
-    .tab{
-      padding: 10px 12px;
-      border-radius: 12px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(255,255,255,0.06);
-      cursor:pointer;
-      font-weight:650;
-      font-size: 12.8px;
-      color: var(--muted);
-      transition: background .15s ease, color .15s ease, border-color .15s ease;
-      user-select:none;
-    }
-    .tab.active{
-      color: var(--text);
-      border-color: rgba(110,231,255,0.35);
-      background: rgba(110,231,255,0.10);
-    }
-
-    .tabletools{
-      display:flex;
-      gap:10px;
-      flex-wrap:wrap;
-      align-items:center;
-      justify-content:space-between;
-      margin-bottom: 10px;
-    }
-    .search{
-      flex: 1;
-      min-width: 220px;
-      display:flex;
-      gap:10px;
-      align-items:center;
-      padding: 10px 12px;
-      border-radius: 12px;
-      background: rgba(0,0,0,0.20);
-      border:1px solid rgba(255,255,255,0.12);
-    }
-    .search input{
-      border:none;
-      background: transparent;
-      padding:0;
-      outline:none;
-    }
-    .search .k{
-      font-size: 12px;
-      color: var(--muted2);
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New";
-    }
-
-    table{
-      width:100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      overflow:hidden;
-      border-radius: var(--radius);
-      border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(0,0,0,0.16);
-    }
-    th, td{
-      padding: 12px 12px;
-      text-align:left;
-      border-bottom: 1px solid rgba(255,255,255,0.08);
-      font-size: 13px;
-      vertical-align: top;
-    }
-    th{
-      font-size: 12px;
-      color: var(--muted);
-      letter-spacing: 0.25px;
-      background: rgba(255,255,255,0.05);
-      position:sticky;
-      top:0;
-      z-index: 1;
-    }
-    tr:hover td{ background: rgba(255,255,255,0.03); }
-
-    .badge{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(255,255,255,0.06);
-    }
-    .badge.good{ border-color: rgba(34,197,94,0.30); background: rgba(34,197,94,0.12); }
-    .badge.bad{ border-color: rgba(239,68,68,0.30); background: rgba(239,68,68,0.12); }
-    .badge.warn{ border-color: rgba(245,158,11,0.30); background: rgba(245,158,11,0.12); }
-
-    code{
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New";
-      font-size: 12px;
-      color: rgba(255,255,255,0.86);
-      background: rgba(255,255,255,0.06);
-      border: 1px solid rgba(255,255,255,0.10);
-      padding: 4px 6px;
-      border-radius: 10px;
-      word-break: break-all;
-    }
-
-    .copy{
-      display:inline-flex;
-      align-items:center;
-      gap:8px;
-    }
-    .copy button{
-      padding: 7px 10px;
-      border-radius: 10px;
-      font-size: 12px;
-    }
-
-    /* Toast */
-    .toast{
-      position: fixed;
-      right: 18px;
-      bottom: 18px;
-      z-index: 999999;
-      display:flex;
-      flex-direction:column;
-      gap: 10px;
-      pointer-events:none;
-    }
-    .toast .item{
-      pointer-events:auto;
-      width: min(420px, calc(100vw - 36px));
-      padding: 12px 14px;
-      border-radius: 14px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.35);
-      backdrop-filter: blur(10px);
-      box-shadow: 0 18px 45px rgba(0,0,0,0.45);
-      display:flex;
-      gap:10px;
-      align-items:flex-start;
-    }
-    .dot{
-      width:10px; height:10px; border-radius:999px;
-      margin-top: 5px;
-      background: var(--primary);
-      box-shadow: 0 0 0 4px rgba(110,231,255,0.10);
-    }
-    .toast .item.good .dot{ background: var(--good); box-shadow: 0 0 0 4px rgba(34,197,94,0.12); }
-    .toast .item.bad .dot{ background: var(--bad); box-shadow: 0 0 0 4px rgba(239,68,68,0.12); }
-    .toast .item.warn .dot{ background: var(--warn); box-shadow: 0 0 0 4px rgba(245,158,11,0.12); }
-    .toast .item .t{
-      display:flex; flex-direction:column; gap:2px;
-    }
-    .toast .item .t .h{ font-weight:800; font-size: 13px; }
-    .toast .item .t .p{ color: var(--muted); font-size: 12.5px; }
-  </style>
+<style>
+:root{
+  --bg:#0b1220;
+  --panel:rgba(255,255,255,0.06);
+  --stroke:rgba(255,255,255,0.12);
+  --text:rgba(255,255,255,0.95);
+  --muted:rgba(255,255,255,0.65);
+  --primary:#6ee7ff;
+  --accent:#7c3aed;
+  --good:#22c55e;
+  --warn:#f59e0b;
+  --bad:#ef4444;
+  --radius:16px;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;
+  color:var(--text);
+  background:
+    radial-gradient(900px 600px at 15% 10%, rgba(124,58,237,.25), transparent 60%),
+    radial-gradient(700px 500px at 80% 0%, rgba(110,231,255,.20), transparent 55%),
+    var(--bg);
+}
+.wrap{max-width:1200px;margin:auto;padding:28px}
+.topbar{
+  display:flex;justify-content:space-between;align-items:center;margin-bottom:20px
+}
+.brand{display:flex;gap:14px;align-items:center}
+.logo{
+  width:44px;height:44px;border-radius:14px;
+  background:linear-gradient(135deg,#6ee7ff,#7c3aed)
+}
+.brand b{font-size:18px}
+.sub{font-size:12px;color:var(--muted)}
+.btn{
+  border:1px solid var(--stroke);
+  background:rgba(255,255,255,.08);
+  color:var(--text);
+  padding:10px 14px;border-radius:12px;
+  cursor:pointer;font-weight:600
+}
+.btn.primary{background:linear-gradient(135deg,#6ee7ff,#7c3aed);border:none}
+.btn.good{background:rgba(34,197,94,.15)}
+.btn.bad{background:rgba(239,68,68,.18)}
+.card{
+  background:var(--panel);
+  border:1px solid var(--stroke);
+  border-radius:var(--radius);
+  padding:16px;
+  margin-bottom:16px
+}
+h3{margin:0 0 10px 0}
+label{font-size:13px;color:var(--muted)}
+input,select{
+  width:100%;padding:10px;border-radius:10px;
+  border:1px solid var(--stroke);
+  background:rgba(0,0,0,.25);
+  color:white
+}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions{text-align:right;margin-top:10px}
+table{width:100%;border-collapse:collapse;margin-top:10px}
+th,td{padding:10px;border-bottom:1px solid rgba(255,255,255,.08);font-size:13px}
+th{color:var(--muted);text-align:left}
+code{background:rgba(255,255,255,.08);padding:4px 6px;border-radius:8px}
+.tabs{display:flex;gap:8px;margin-bottom:10px}
+.tab{
+  padding:8px 12px;border-radius:10px;
+  border:1px solid var(--stroke);
+  cursor:pointer;color:var(--muted)
+}
+.tab.active{background:rgba(110,231,255,.18);color:white}
+.toast{
+  position:fixed;bottom:20px;right:20px;z-index:9999
+}
+.toast div{
+  background:rgba(0,0,0,.8);
+  padding:12px 16px;border-radius:12px;
+  margin-top:10px
+}
+</style>
 </head>
 
 <body>
-  <div class="wrap">
+<div class="wrap">
 
-    <div class="topbar">
-      <div class="brand">
-        <div class="logo" aria-hidden="true"></div>
-        <div class="brandtext">
-          <div class="title">AutoSuite Admin</div>
-          <div class="sub">Remote licensing & controlled updates — <b>ICHKOV</b></div>
-        </div>
-      </div>
-
-      <div class="righttools">
-        <div class="pill" title="Your server base URL used for core script delivery">
-          <span style="color:var(--muted);font-weight:700;">BASE_URL</span>
-          <code id="baseUrl">{{ base_url }}</code>
-        </div>
-
-        <button class="btn" id="btnCopyAdminLink" type="button">Copy Admin Link</button>
-        <button class="btn primary" id="btnHealth" type="button">Quick Health Check</button>
-      </div>
+<div class="topbar">
+  <div class="brand">
+    <div class="logo"></div>
+    <div>
+      <b>AutoSuite Admin</b>
+      <div class="sub">Remote licensing system — ICHKOV</div>
     </div>
+  </div>
+  <button class="btn" onclick="copy(location.href)">Copy Admin Link</button>
+</div>
 
-    <div class="grid">
+<!-- CREATE VERSION -->
+<div class="card">
+<h3>Create Script Version</h3>
+<form method="post" action="/admin/version/create?token={{ request.query_params.get('token','') }}">
+<div class="row">
+  <label>Version
+    <input name="version" required placeholder="3.2.0">
+  </label>
+  <label>Channel
+    <select name="channel">
+      <option value="stable">stable</option>
+      <option value="beta">beta</option>
+    </select>
+  </label>
+</div>
+<label>Notes
+  <input name="notes" placeholder="Initial release">
+</label>
+<div class="actions">
+  <button class="btn primary">Create Version</button>
+</div>
+</form>
+</div>
 
-      <!-- LEFT: ACTIONS -->
-      <div class="card">
-        <div class="hd">
-          <h3>Control Panel</h3>
-          <div class="hint">Create companies, versions, licenses — fast.</div>
-        </div>
-        <div class="bd">
-          <div class="section">
+<!-- CREATE COMPANY -->
+<div class="card">
+<h3>Create Company</h3>
+<form method="post" action="/admin/company/create?token={{ request.query_params.get('token','') }}">
+<label>Company name
+  <input name="name" required>
+</label>
+<label>Allowed domain
+  <input name="allowed_domain" placeholder="my.munja-trans.at">
+</label>
+<div class="actions">
+  <button class="btn primary">Create Company</button>
+</div>
+</form>
+</div>
 
-            <!-- Create Version -->
-            <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <div style="font-weight:850;">Create Script Version</div>
-                <span class="badge warn">Required</span>
-              </div>
+<!-- CREATE LICENSE -->
+<div class="card">
+<h3>Create License</h3>
+<form method="post" action="/admin/license/create?token={{ request.query_params.get('token','') }}">
+<div class="row">
+<label>Company ID
+  <input name="company_id" required>
+</label>
+<label>Days
+  <input name="days" value="30">
+</label>
+</div>
+<label>Max devices
+  <input name="max_devices" value="2">
+</label>
+<div class="actions">
+  <button class="btn primary">Create License</button>
+</div>
+</form>
+</div>
 
-              <form method="post" action="/admin/version/create" class="js-form">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
+<!-- TABLES -->
+<div class="card">
+<div class="tabs">
+  <div class="tab active" onclick="showTab('companies')">Companies</div>
+  <div class="tab" onclick="showTab('licenses')">Licenses</div>
+  <div class="tab" onclick="showTab('versions')">Versions</div>
+</div>
 
-                <div class="row">
-                  <label>
-                    Version
-                    <input name="version" placeholder="e.g. 3.2.0" required>
-                  </label>
+<!-- COMPANIES -->
+<div id="companies">
+<table>
+<thead><tr><th>ID</th><th>Name</th><th>Domain</th><th>Channel</th></tr></thead>
+<tbody>
+{% for c in companies %}
+<tr>
+<td><code>{{ c.id }}</code></td>
+<td>{{ c.name }}</td>
+<td>{{ c.allowed_domain or "-" }}</td>
+<td>{{ c.channel }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 
-                  <label>
-                    Channel
-                    <select name="channel">
-                      <option value="stable">stable</option>
-                      <option value="beta">beta</option>
-                    </select>
-                  </label>
-                </div>
-
-                <label>
-                  Notes (optional)
-                  <input name="notes" placeholder="Release notes / change summary">
-                </label>
-
-                <div class="actions">
-                  <button class="btn primary" type="submit">Create Version</button>
-                </div>
-              </form>
-            </div>
-
-            <!-- Create Company -->
-            <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <div style="font-weight:850;">Create Company</div>
-                <span class="badge">Recommended domain lock</span>
-              </div>
-
-              <form method="post" action="/admin/company/create" class="js-form">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
-
-                <label>
-                  Company name
-                  <input name="name" placeholder="Example: Munja Trans GmbH" required>
-                </label>
-
-                <label>
-                  Allowed domain (optional but recommended)
-                  <input name="allowed_domain" placeholder="Example: my.munja-trans.at">
-                </label>
-
-                <div class="actions">
-                  <button class="btn primary" type="submit">Create Company</button>
-                </div>
-              </form>
-            </div>
-
-            <!-- Create License -->
-            <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <div style="font-weight:850;">Create License</div>
-                <span class="badge">Key for customer</span>
-              </div>
-
-              <form method="post" action="/admin/license/create" class="js-form">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
-
-                <div class="row">
-                  <label>
-                    Company ID
-                    <input name="company_id" placeholder="From Companies table" required>
-                  </label>
-                  <label>
-                    Duration (days)
-                    <input name="days" placeholder="30" value="30">
-                  </label>
-                </div>
-
-                <label>
-                  Max devices
-                  <input name="max_devices" placeholder="2" value="2">
-                </label>
-
-                <div class="actions">
-                  <button class="btn primary" type="submit">Create License</button>
-                </div>
-              </form>
-            </div>
-
-            <!-- Extend / Block -->
-            <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <div style="font-weight:850;">License Actions</div>
-                <span class="badge">Instant remote control</span>
-              </div>
-
-              <form method="post" action="/admin/license/extend" class="js-form" data-confirm="Extend this license?">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
-
-                <label>
-                  License key
-                  <input name="license_key" placeholder="AS_..." required>
-                </label>
-
-                <div class="row">
-                  <label>
-                    Add days
-                    <input name="days" placeholder="30" value="30">
-                  </label>
-                  <label>
-                    Quick add
-                    <select id="quickDays">
-                      <option value="">—</option>
-                      <option value="30">+30 days</option>
-                      <option value="90">+90 days</option>
-                      <option value="180">+180 days</option>
-                      <option value="365">+365 days</option>
-                    </select>
-                  </label>
-                </div>
-
-                <div class="actions">
-                  <button class="btn good" type="submit">Extend</button>
-                </div>
-              </form>
-
-              <div class="divider"></div>
-
-              <form method="post" action="/admin/license/block" class="js-form" data-confirm="Block this license now?">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
-
-                <label>
-                  License key
-                  <input name="license_key" placeholder="AS_..." required>
-                </label>
-
-                <div class="actions">
-                  <button class="btn bad" type="submit">Block License</button>
-                </div>
-              </form>
-            </div>
-
-            <!-- Update control -->
-            <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                <div style="font-weight:850;">Update Control (per company)</div>
-                <span class="badge warn">Targeted rollouts</span>
-              </div>
-
-              <form method="post" action="/admin/company/update_control" class="js-form" data-confirm="Apply update control changes?">
-                <input type="hidden" name="token" value="{{ request.query_params.get('token','') }}">
-
-                <label>
-                  Company ID
-                  <input name="company_id" placeholder="From Companies table" required>
-                </label>
-
-                <div class="row">
-                  <label>
-                    Channel
-                    <select name="channel">
-                      <option value="">(no change)</option>
-                      <option value="stable">stable</option>
-                      <option value="beta">beta</option>
-                    </select>
-                  </label>
-
-                  <label>
-                    Pinned version (optional)
-                    <input name="pinned_version" placeholder="e.g. 3.2.0 (blank = no pin)">
-                  </label>
-                </div>
-
-                <label>
-                  Force update
-                  <select name="force_update">
-                    <option value="">(no change)</option>
-                    <option value="true">true (force)</option>
-                    <option value="false">false</option>
-                  </select>
-                </label>
-
-                <div class="actions">
-                  <button class="btn primary" type="submit">Save Update Rules</button>
-                </div>
-              </form>
-            </div>
-
-          </div>
-        </div>
-      </div>
-
-      <!-- RIGHT: DATA -->
-      <div class="card">
-        <div class="hd">
-          <h3>Data</h3>
-          <div class="hint">Search, copy, and manage quickly.</div>
-        </div>
-
-        <div class="bd">
-          <div class="tabs" id="tabs">
-            <div class="tab active" data-tab="companies">Companies</div>
-            <div class="tab" data-tab="licenses">Licenses</div>
-            <div class="tab" data-tab="versions">Versions</div>
-          </div>
-
-          <div class="tabletools">
-            <div class="search">
-              <span class="k">CTRL + K</span>
-              <input id="search" placeholder="Search in the current table…">
-            </div>
-            <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:flex-end;">
-              <button class="btn" id="btnCopyBase" type="button">Copy BASE_URL</button>
-              <button class="btn" id="btnReload" type="button">Reload</button>
-            </div>
-          </div>
-
-          <!-- Companies table -->
-          <div class="tabpane" id="tab-companies">
-            <table id="tbl-companies">
-              <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th>Name</th>
-                  <th>Domain lock</th>
-                  <th style="width:90px;">Channel</th>
-                  <th style="width:120px;">Pinned</th>
-                  <th style="width:90px;">Force</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for c in companies %}
-                  <tr>
-                    <td><code>{{ c.id }}</code></td>
-                    <td>{{ c.name }}</td>
-                    <td>{{ c.allowed_domain or "-" }}</td>
-                    <td><span class="badge">{{ c.channel }}</span></td>
-                    <td>{{ c.pinned_version or "-" }}</td>
-                    <td>
-                      {% if c.force_update %}
-                        <span class="badge warn">true</span>
-                      {% else %}
-                        <span class="badge">false</span>
-                      {% endif %}
-                    </td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Licenses table -->
-          <div class="tabpane" id="tab-licenses" style="display:none;">
-            <table id="tbl-licenses">
-              <thead>
-  <tr>
-    <th style="width:70px;">ID</th>
-    <th style="width:110px;">Company ID</th>
-    <th>License key</th>
-    <th style="width:110px;">Active</th>
-    <th>Expires</th>
-    <th style="width:110px;">Devices</th>
-    <th style="width:300px;">Actions</th>
-  </tr>
+<!-- LICENSES -->
+<div id="licenses" style="display:none">
+<table>
+<thead>
+<tr>
+<th>ID</th><th>Company</th><th>Key</th><th>Active</th><th>Expires</th><th>Actions</th>
+</tr>
 </thead>
-
-              <tbody>
-                {% for l in licenses %}
-                  <tr>
-<td><code>{{ l.max_devices }}</code></td>
+<tbody>
+{% for l in licenses %}
+<tr>
+<td><code>{{ l.id }}</code></td>
+<td><code>{{ l.company_id }}</code></td>
+<td><code>{{ l.license_key }}</code></td>
+<td>{{ 'YES' if l.active else 'NO' }}</td>
+<td>{{ l.expires_at }}</td>
 <td>
-  <div style="display:flex; gap:8px; flex-wrap:wrap;">
-    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="30">+30</button>
-    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="90">+90</button>
-    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="180">+180</button>
-    <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="365">+365</button>
-    <button class="btn bad js-block" type="button" data-key="{{ l.license_key }}">Block</button>
-  </div>
+<button class="btn good" onclick="extend('{{l.license_key}}',30)">+30</button>
+<button class="btn good" onclick="extend('{{l.license_key}}',90)">+90</button>
+<button class="btn good" onclick="extend('{{l.license_key}}',180)">+180</button>
+<button class="btn good" onclick="extend('{{l.license_key}}',365)">+365</button>
+<button class="btn bad" onclick="block('{{l.license_key}}')">Block</button>
 </td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 
-                    <td><code>{{ l.id }}</code></td>
-                    <td><code>{{ l.company_id }}</code></td>
-                    <td>
-                      <span class="copy">
-                        <code class="key">{{ l.license_key }}</code>
-                        <button class="btn" type="button" data-copy="{{ l.license_key }}">Copy</button>
-                      </span>
-                    </td>
-                    <td>
-                      {% if l.active %}
-                        <span class="badge good">active</span>
-                      {% else %}
-                        <span class="badge bad">blocked</span>
-                      {% endif %}
-                    </td>
-                    <td>{{ l.expires_at }}</td>
-                    <td><code>{{ l.max_devices }}</code></td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+<!-- VERSIONS -->
+<div id="versions" style="display:none">
+<table>
+<thead><tr><th>ID</th><th>Version</th><th>Channel</th><th>Notes</th></tr></thead>
+<tbody>
+{% for v in versions %}
+<tr>
+<td><code>{{ v.id }}</code></td>
+<td>{{ v.version }}</td>
+<td>{{ v.channel }}</td>
+<td>{{ v.notes or '-' }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 
-          <!-- Versions table -->
-          <div class="tabpane" id="tab-versions" style="display:none;">
-            <table id="tbl-versions">
-              <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th style="width:120px;">Version</th>
-                  <th style="width:110px;">Channel</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for v in versions %}
-                  <tr>
-                    <td><code>{{ v.id }}</code></td>
-                    <td><code>{{ v.version }}</code></td>
-                    <td><span class="badge">{{ v.channel }}</span></td>
-                    <td style="color:var(--muted);">{{ v.notes or "-" }}</td>
-                  </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </div>
+</div>
 
-        </div>
-      </div>
+</div>
 
-    </div>
-  </div>
-
-  <div class="toast" id="toast"></div>
-
-  <script>
-    // ===== Utilities =====
-    const qs = (s, el=document) => el.querySelector(s);
-    const qsa = (s, el=document) => [...el.querySelectorAll(s)];
-
-    function toast(type, title, message){
-      const host = qs('#toast');
-      const el = document.createElement('div');
-      el.className = 'item ' + (type || '');
-      el.innerHTML = `
-        <div class="dot"></div>
-        <div class="t">
-          <div class="h"></div>
-          <div class="p"></div>
-        </div>
-      `;
-      el.querySelector('.h').textContent = title || 'Done';
-      el.querySelector('.p').textContent = message || '';
-      host.appendChild(el);
-      setTimeout(() => el.remove(), 3200);
-    }
-
-    async function copyText(t){
-      try{
-        await navigator.clipboard.writeText(t);
-        toast('good', 'Copied', t);
-      }catch{
-        // fallback
-        const ta = document.createElement('textarea');
-        ta.value = t;
-        document.body.appendChild(ta);
-        ta.select();
-        document.execCommand('copy');
-        ta.remove();
-        toast('good', 'Copied', t);
-      }
-    }
-
-    // ===== Token-safe form handling (confirm + better UX) =====
-    qsa('form.js-form').forEach(f => {
-      f.addEventListener('submit', (e) => {
-        const msg = f.getAttribute('data-confirm');
-        if (msg && !confirm(msg)) {
-          e.preventDefault();
-          return;
-        }
-        toast('warn', 'Submitting…', 'Request sent to server.');
-      });
-    });
-
-    // ===== Quick days dropdown =====
-    const quickDays = qs('#quickDays');
-    if (quickDays){
-      quickDays.addEventListener('change', () => {
-        const v = quickDays.value;
-        if (!v) return;
-        const daysInput = qs('form[action="/admin/license/extend"] input[name="days"]');
-        if (daysInput) daysInput.value = v;
-        toast('good', 'Set days', `+${v} days`);
-      });
-    }
-
-    // ===== Tabs =====
-    const tabs = qs('#tabs');
-    const panes = {
-      companies: qs('#tab-companies'),
-      licenses: qs('#tab-licenses'),
-      versions: qs('#tab-versions'),
-    };
-    const tables = {
-      companies: qs('#tbl-companies'),
-      licenses: qs('#tbl-licenses'),
-      versions: qs('#tbl-versions'),
-    };
-
-    function setTab(name){
-      qsa('.tab', tabs).forEach(t => t.classList.toggle('active', t.dataset.tab === name));
-      Object.keys(panes).forEach(k => panes[k].style.display = (k === name ? '' : 'none'));
-      qs('#search').value = '';
-      filterCurrent('');
-    }
-
-    qsa('.tab', tabs).forEach(t => {
-      t.addEventListener('click', () => setTab(t.dataset.tab));
-    });
-
-    // ===== Search filter =====
-    function currentTab(){
-      return qs('.tab.active', tabs).dataset.tab;
-    }
-
-    function filterTable(tbl, term){
-      const rows = qsa('tbody tr', tbl);
-      const q = term.trim().toLowerCase();
-      rows.forEach(r => {
-        const text = r.innerText.toLowerCase();
-        r.style.display = (!q || text.includes(q)) ? '' : 'none';
-      });
-    }
-
-    function filterCurrent(term){
-      const tab = currentTab();
-      filterTable(tables[tab], term);
-    }
-
-    const search = qs('#search');
-    search.addEventListener('input', () => filterCurrent(search.value));
-    window.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k'){
-        e.preventDefault();
-        search.focus();
-      }
-    });
-
-    // ===== Copy buttons =====
-    qs('#btnReload').addEventListener('click', () => location.reload());
-    qs('#btnCopyBase').addEventListener('click', () => copyText(qs('#baseUrl').textContent.trim()));
-
-    qsa('button[data-copy]').forEach(b => {
-      b.addEventListener('click', () => copyText(b.getAttribute('data-copy')));
-    });
-
-    // Copy admin link with token already included
-    qs('#btnCopyAdminLink').addEventListener('click', () => {
-      copyText(location.href);
-    });
-
-    // Quick health check: just call "/" and show toast
-    qs('#btnHealth').addEventListener('click', async () => {
-      try{
-        const r = await fetch('/');
-        const txt = (await r.text()).trim();
-        toast('good', 'Health OK', txt || 'OK');
-      }catch{
-        toast('bad', 'Health failed', 'Could not reach server.');
-      }
+<div class="toast" id="toast"></div>
 
 <script>
-  // --- helper: read token from URL ---
-  function getToken() {
-    const u = new URL(location.href);
-    return u.searchParams.get('token') || '';
-  }
-
-  // --- helper: POST form data (x-www-form-urlencoded) ---
-  async function postForm(path, dataObj) {
-    const token = getToken();
-    const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(dataObj)) body.append(k, String(v));
-
-    // token is checked via query param in your backend
-    const url = token ? `${path}?token=${encodeURIComponent(token)}` : path;
-
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: body.toString()
-    });
-
-    let payload = null;
-    try { payload = await res.json(); } catch {}
-    if (!res.ok) {
-      const msg = payload?.detail ? JSON.stringify(payload.detail) : (payload ? JSON.stringify(payload) : `HTTP ${res.status}`);
-      throw new Error(msg);
-    }
-    return payload;
-  }
-
-  // --- One-click extend buttons ---
-  document.querySelectorAll('.js-extend').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const key = btn.getAttribute('data-key');
-      const days = btn.getAttribute('data-days');
-
-      if (!key || !days) return;
-
-      // optional confirm (remove if you want it instant)
-      if (!confirm(`Extend this license by ${days} days?\n\n${key}`)) return;
-
-      try {
-        toast('warn', 'Extending…', `+${days} days`);
-        const out = await postForm('/admin/license/extend', { license_key: key, days });
-        toast('good', 'Extended', out?.expires_at ? `New expiry: ${out.expires_at}` : 'Done');
-        // simplest refresh so table updates
-        setTimeout(() => location.reload(), 600);
-      } catch (e) {
-        toast('bad', 'Extend failed', String(e.message || e));
-      }
-    });
+function showTab(t){
+  ['companies','licenses','versions'].forEach(x=>{
+    document.getElementById(x).style.display = (x===t?'block':'none');
   });
-
-  // --- One-click block buttons ---
-  document.querySelectorAll('.js-block').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const key = btn.getAttribute('data-key');
-      if (!key) return;
-
-      if (!confirm(`Block this license NOW?\n\n${key}`)) return;
-
-      try {
-        toast('warn', 'Blocking…', key);
-        await postForm('/admin/license/block', { license_key: key });
-        toast('good', 'Blocked', 'License is now blocked');
-        setTimeout(() => location.reload(), 600);
-      } catch (e) {
-        toast('bad', 'Block failed', String(e.message || e));
-      }
-    });
+  document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
+  event.target.classList.add('active');
+}
+function toast(msg){
+  const t=document.createElement('div');
+  t.textContent=msg;
+  document.getElementById('toast').appendChild(t);
+  setTimeout(()=>t.remove(),3000);
+}
+async function extend(key,days){
+  if(!confirm(`Extend ${days} days?`))return;
+  await fetch(`/admin/license/extend?token={{ request.query_params.get('token','') }}`,{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`license_key=${encodeURIComponent(key)}&days=${days}`
   });
+  toast('Extended');
+  setTimeout(()=>location.reload(),800);
+}
+async function block(key){
+  if(!confirm('Block license?'))return;
+  await fetch(`/admin/license/block?token={{ request.query_params.get('token','') }}`,{
+    method:'POST',
+    headers:{'Content-Type':'application/x-www-form-urlencoded'},
+    body:`license_key=${encodeURIComponent(key)}`
+  });
+  toast('Blocked');
+  setTimeout(()=>location.reload(),800);
+}
 </script>
-    });
-  </script>
+
 </body>
 </html>
