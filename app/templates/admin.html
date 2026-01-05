@@ -38,30 +38,54 @@
         var(--bg);
     }
 
-    .wrap{ max-width:1200px; margin:0 auto; padding: 28px 18px 60px; }
-
-    .topbar{
-      display:flex; gap:16px; align-items:center; justify-content:space-between;
-      margin-bottom:18px;
+    /* ====== Page container ====== */
+    .wrap{
+      max-width: min(1280px, 100%);
+      margin:0 auto;
+      padding: clamp(16px, 2.2vw, 28px) clamp(12px, 2vw, 18px) 60px;
     }
 
-    .brand{ display:flex; gap:14px; align-items:center; min-width: 280px; }
+    /* ====== Topbar ====== */
+    .topbar{
+      display:flex;
+      gap:12px;
+      align-items:center;
+      justify-content:space-between;
+      flex-wrap:wrap;
+      margin-bottom: 16px;
+    }
+
+    .brand{
+      display:flex; gap:14px; align-items:center;
+      min-width: min(420px, 100%);
+      flex: 1 1 420px;
+    }
+
     .logo{
       width:44px; height:44px; border-radius: 14px;
       background: linear-gradient(135deg, rgba(110,231,255,0.95), rgba(124,58,237,0.95));
       box-shadow: 0 10px 26px rgba(124,58,237,0.25);
       position:relative; overflow:hidden;
+      flex: 0 0 auto;
     }
     .logo:before{
       content:""; position:absolute; inset:-30px;
       background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.35), transparent 45%);
       transform: rotate(18deg);
     }
-    .brandtext{ display:flex; flex-direction:column; line-height:1.05; }
-    .brandtext .title{ font-size: 16px; font-weight: 800; letter-spacing: 0.2px; }
+    .brandtext{ display:flex; flex-direction:column; line-height:1.1; }
+    .brandtext .title{ font-size: 16px; font-weight: 850; letter-spacing: 0.2px; }
     .brandtext .sub{ font-size: 12.5px; color: var(--muted); }
 
-    .righttools{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; justify-content:flex-end; }
+    .righttools{
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-end;
+      flex-wrap:wrap;
+      flex: 1 1 420px;
+      min-width: min(520px, 100%);
+    }
 
     .pill{
       display:flex; align-items:center; gap:10px;
@@ -70,15 +94,20 @@
       border:1px solid var(--stroke);
       box-shadow: 0 10px 30px rgba(0,0,0,0.18);
       backdrop-filter: blur(10px);
-      max-width: 520px;
+      flex: 1 1 320px;
+      min-width: 220px;
+      max-width: 100%;
     }
     .pill code{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New";
       font-size:12px;
       color: rgba(255,255,255,0.86);
       white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+      width: 100%;
+      display:block;
     }
 
+    /* ====== Buttons ====== */
     .btn{
       appearance:none;
       border: 1px solid var(--stroke);
@@ -104,19 +133,18 @@
     .btn.warn{ background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.30); }
     .btn.bad{ background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.30); }
 
+    /* ====== Main grid ====== */
     .grid{
       display:grid;
-      grid-template-columns: 420px 1fr;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
       gap: 16px;
       align-items:start;
     }
     @media (max-width: 1020px){
       .grid{ grid-template-columns: 1fr; }
-      .brand{ min-width:unset; }
-      .pill{ max-width: unset; width:100%; }
-      .righttools{ width:100%; }
     }
 
+    /* ====== Cards ====== */
     .card{
       background: linear-gradient(180deg, var(--panel), rgba(255,255,255,0.04));
       border: 1px solid var(--stroke);
@@ -124,18 +152,24 @@
       box-shadow: var(--shadow);
       overflow:hidden;
       backdrop-filter: blur(10px);
+      min-width: 0; /* important for grid children */
     }
     .card .hd{
       padding: 14px 16px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
       display:flex; align-items:center; justify-content:space-between; gap: 10px;
+      flex-wrap:wrap;
     }
     .card .hd h3{ margin:0; font-size: 14px; letter-spacing: 0.2px; }
     .card .hd .hint{ font-size:12px; color: var(--muted); }
-    .card .bd{ padding: 14px 16px 16px; }
+    .card .bd{
+      padding: 14px 16px 16px;
+      min-width: 0;
+    }
 
     .section{ display:flex; flex-direction:column; gap: 14px; }
 
+    /* ====== Forms ====== */
     .form{
       display:flex; flex-direction:column; gap: 10px;
       padding: 12px;
@@ -177,6 +211,7 @@
       margin-top:2px;
     }
 
+    /* ====== Tabs ====== */
     .tabs{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom: 10px; }
     .tab{
       padding: 10px 12px; border-radius: 12px;
@@ -195,54 +230,76 @@
       background: rgba(110,231,255,0.10);
     }
 
+    /* ====== Table tools ====== */
     .tabletools{
-      display:flex; gap:10px; flex-wrap:wrap;
-      align-items:center; justify-content:space-between;
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:space-between;
       margin-bottom: 10px;
     }
     .search{
-      flex: 1; min-width: 220px;
+      flex: 1 1 320px;
+      min-width: 220px;
       display:flex; gap:10px; align-items:center;
       padding: 10px 12px;
       border-radius: 12px;
       background: rgba(0,0,0,0.20);
       border:1px solid rgba(255,255,255,0.12);
+      min-width: 0;
     }
     .search input{
       border:none; background: transparent; padding:0; outline:none;
+      width:100%;
+      min-width: 0;
     }
     .search .k{
       font-size: 12px; color: var(--muted2);
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New";
+      flex: 0 0 auto;
     }
 
-    table{
-      width:100%;
-      border-collapse: separate;
-      border-spacing: 0;
-      overflow:hidden;
+    /* ====== Tables: always fit container + scroll when needed ====== */
+    .tablewrap{
+      width: 100%;
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
       border-radius: var(--radius);
       border: 1px solid rgba(255,255,255,0.10);
       background: rgba(0,0,0,0.16);
     }
+
+    table{
+      width: 100%;
+      min-width: 860px; /* prevents cramping; wrapper handles scrolling */
+      border-collapse: separate;
+      border-spacing: 0;
+      background: transparent;
+    }
+
     th, td{
       padding: 12px 12px;
       text-align:left;
       border-bottom: 1px solid rgba(255,255,255,0.08);
       font-size: 13px;
       vertical-align: top;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     th{
       font-size: 12px;
       color: var(--muted);
       letter-spacing: 0.25px;
       background: rgba(255,255,255,0.05);
-      position:sticky;
-      top:0;
-      z-index: 1;
+      position: sticky;
+      top: 0;
+      z-index: 2;
     }
     tr:hover td{ background: rgba(255,255,255,0.03); }
 
+    /* ====== Inline code & key handling ====== */
     code{
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New";
       font-size: 12px;
@@ -251,21 +308,33 @@
       border: 1px solid rgba(255,255,255,0.10);
       padding: 4px 6px;
       border-radius: 10px;
-      word-break: break-all;
+      word-break: break-word; /* better than break-all */
+      overflow-wrap: anywhere;
     }
 
     .copy{
-      display:inline-flex;
-      align-items:center;
+      display:flex;
+      align-items:flex-start;
       gap:8px;
+      flex-wrap:wrap;
+      max-width: 100%;
+      min-width: 0;
+    }
+    .copy code.key{
+      display:block;
+      max-width: min(520px, 100%);
+      white-space: normal;           /* allow wrap */
+      word-break: break-word;
+      overflow-wrap: anywhere;
     }
     .copy button{
       padding: 7px 10px;
       border-radius: 10px;
       font-size: 12px;
+      flex: 0 0 auto;
     }
 
-    /* Badges */
+    /* ====== Badges ====== */
     .badge{
       display:inline-flex;
       align-items:center;
@@ -283,7 +352,27 @@
     .badge.bad{  border-color: rgba(239,68,68,0.30); background: rgba(239,68,68,0.12); }
     .badge.neutral{ border-color: rgba(255,255,255,0.18); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.70); }
 
-    /* Toast */
+    /* ====== Actions cell ====== */
+    .actionsWrap{
+      display:flex;
+      gap:8px;
+      flex-wrap:wrap;
+      align-items:center;
+      justify-content:flex-start;
+      max-width: 100%;
+    }
+    .actionsWrap .btn{
+      padding: 9px 10px;
+      border-radius: 12px;
+      font-size: 12.5px;
+    }
+
+    /* Make big action sets not overflow on very small screens */
+    @media (max-width: 520px){
+      table{ min-width: 760px; }
+    }
+
+    /* ====== Toast ====== */
     .toast{
       position: fixed;
       right: 18px;
@@ -358,7 +447,7 @@
 
             <!-- Create Version -->
             <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <div style="font-weight:850;">Create Script Version</div>
                 <span class="badge warn">Required</span>
               </div>
@@ -392,7 +481,7 @@
 
             <!-- Create Company -->
             <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <div style="font-weight:850;">Create Company</div>
                 <span class="badge neutral">Domain lock recommended</span>
               </div>
@@ -416,7 +505,7 @@
 
             <!-- Create License -->
             <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <div style="font-weight:850;">Create License</div>
                 <span class="badge neutral">Key for customer</span>
               </div>
@@ -446,7 +535,7 @@
 
             <!-- Update control -->
             <div class="form">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <div style="font-weight:850;">Update Control (per company)</div>
                 <span class="badge warn">Targeted rollouts</span>
               </div>
@@ -519,141 +608,147 @@
 
           <!-- Companies table -->
           <div class="tabpane" id="tab-companies">
-            <table id="tbl-companies">
-              <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th>Name</th>
-                  <th>Domain lock</th>
-                  <th style="width:90px;">Channel</th>
-                  <th style="width:120px;">Pinned</th>
-                  <th style="width:90px;">Force</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for c in companies %}
+            <div class="tablewrap">
+              <table id="tbl-companies">
+                <thead>
                   <tr>
-                    <td><code>{{ c.id }}</code></td>
-                    <td>{{ c.name }}</td>
-                    <td>{{ c.allowed_domain or "-" }}</td>
-                    <td><span class="badge neutral">{{ c.channel }}</span></td>
-                    <td>{{ c.pinned_version or "-" }}</td>
-                    <td>
-                      {% if c.force_update %}
-                        <span class="badge warn">true</span>
-                      {% else %}
-                        <span class="badge neutral">false</span>
-                      {% endif %}
-                    </td>
+                    <th>ID</th>
+                    <th>Name</th>
+                    <th>Domain lock</th>
+                    <th>Channel</th>
+                    <th>Pinned</th>
+                    <th>Force</th>
                   </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {% for c in companies %}
+                    <tr>
+                      <td><code>{{ c.id }}</code></td>
+                      <td>{{ c.name }}</td>
+                      <td>{{ c.allowed_domain or "-" }}</td>
+                      <td><span class="badge neutral">{{ c.channel }}</span></td>
+                      <td>{{ c.pinned_version or "-" }}</td>
+                      <td>
+                        {% if c.force_update %}
+                          <span class="badge warn">true</span>
+                        {% else %}
+                          <span class="badge neutral">false</span>
+                        {% endif %}
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <!-- Licenses table -->
           <div class="tabpane" id="tab-licenses" style="display:none;">
-            <table id="tbl-licenses">
-              <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th style="width:110px;">Company ID</th>
-                  <th>License key</th>
-                  <th style="width:110px;">Active</th>
-                  <th>Expires</th>
-                  <th style="width:140px;">Devices</th>
-                  <th style="width:150px;">Days left</th>
-                  <th style="width:560px;">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for l in licenses %}
+            <div class="tablewrap">
+              <table id="tbl-licenses">
+                <thead>
                   <tr>
-                    <td><code>{{ l.id }}</code></td>
-                    <td><code>{{ l.company_id }}</code></td>
-                    <td>
-                      <span class="copy">
-                        <code class="key">{{ l.license_key }}</code>
-                        <button class="btn" type="button" data-copy="{{ l.license_key }}">Copy</button>
-                      </span>
-                    </td>
-                    <td>
-                      {% if l.active %}
-                        <span class="badge good">active</span>
-                      {% else %}
-                        <span class="badge bad">blocked</span>
-                      {% endif %}
-                    </td>
-                    <td>{{ l.expires_at }}</td>
-
-                    <!-- Devices (used / max) -->
-                    <td>
-                      {% set used = (l.device_count or 0) %}
-                      {% set maxd = (l.max_devices or 0) %}
-
-                      {% if maxd > 0 and used >= maxd %}
-                        <span class="badge bad">{{ used }} / {{ maxd }}</span>
-                      {% elif maxd > 0 and used >= (maxd - 1) %}
-                        <span class="badge warn">{{ used }} / {{ maxd }}</span>
-                      {% else %}
-                        <span class="badge good">{{ used }} / {{ maxd }}</span>
-                      {% endif %}
-                    </td>
-
-                    <!-- Days left -->
-                    <td>
-                      <span class="badge neutral js-daysleft" data-expires="{{ l.expires_at.isoformat() }}">…</span>
-                    </td>
-
-                    <!-- Actions -->
-                    <td>
-                      <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                        <!-- extend -->
-                        <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="30">+30</button>
-                        <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="90">+90</button>
-                        <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="180">+180</button>
-                        <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="365">+365</button>
-
-                        <!-- subtract -->
-                        <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-30">-30</button>
-                        <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-90">-90</button>
-                        <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-180">-180</button>
-                        <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-365">-365</button>
-
-                        <!-- block + reset + delete -->
-                        <button class="btn bad js-block" type="button" data-key="{{ l.license_key }}">Block</button>
-                        <button class="btn warn js-reset-devices" type="button" data-key="{{ l.license_key }}">Reset Devices</button>
-                        <button class="btn bad js-delete" type="button" data-key="{{ l.license_key }}">Delete</button>
-                      </div>
-                    </td>
+                    <th>ID</th>
+                    <th>Company ID</th>
+                    <th>License key</th>
+                    <th>Active</th>
+                    <th>Expires</th>
+                    <th>Devices</th>
+                    <th>Days left</th>
+                    <th>Actions</th>
                   </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {% for l in licenses %}
+                    <tr>
+                      <td><code>{{ l.id }}</code></td>
+                      <td><code>{{ l.company_id }}</code></td>
+                      <td>
+                        <span class="copy">
+                          <code class="key">{{ l.license_key }}</code>
+                          <button class="btn" type="button" data-copy="{{ l.license_key }}">Copy</button>
+                        </span>
+                      </td>
+                      <td>
+                        {% if l.active %}
+                          <span class="badge good">active</span>
+                        {% else %}
+                          <span class="badge bad">blocked</span>
+                        {% endif %}
+                      </td>
+                      <td>{{ l.expires_at }}</td>
+
+                      <!-- Devices (used / max) -->
+                      <td>
+                        {% set used = (l.device_count or 0) %}
+                        {% set maxd = (l.max_devices or 0) %}
+
+                        {% if maxd > 0 and used >= maxd %}
+                          <span class="badge bad">{{ used }} / {{ maxd }}</span>
+                        {% elif maxd > 0 and used >= (maxd - 1) %}
+                          <span class="badge warn">{{ used }} / {{ maxd }}</span>
+                        {% else %}
+                          <span class="badge good">{{ used }} / {{ maxd }}</span>
+                        {% endif %}
+                      </td>
+
+                      <!-- Days left -->
+                      <td>
+                        <span class="badge neutral js-daysleft" data-expires="{{ l.expires_at.isoformat() }}">…</span>
+                      </td>
+
+                      <!-- Actions -->
+                      <td>
+                        <div class="actionsWrap">
+                          <!-- extend -->
+                          <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="30">+30</button>
+                          <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="90">+90</button>
+                          <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="180">+180</button>
+                          <button class="btn good js-extend" type="button" data-key="{{ l.license_key }}" data-days="365">+365</button>
+
+                          <!-- subtract -->
+                          <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-30">-30</button>
+                          <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-90">-90</button>
+                          <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-180">-180</button>
+                          <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-365">-365</button>
+
+                          <!-- block + reset + delete -->
+                          <button class="btn bad js-block" type="button" data-key="{{ l.license_key }}">Block</button>
+                          <button class="btn warn js-reset-devices" type="button" data-key="{{ l.license_key }}">Reset Devices</button>
+                          <button class="btn bad js-delete" type="button" data-key="{{ l.license_key }}">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <!-- Versions table -->
           <div class="tabpane" id="tab-versions" style="display:none;">
-            <table id="tbl-versions">
-              <thead>
-                <tr>
-                  <th style="width:70px;">ID</th>
-                  <th style="width:120px;">Version</th>
-                  <th style="width:110px;">Channel</th>
-                  <th>Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for v in versions %}
+            <div class="tablewrap">
+              <table id="tbl-versions">
+                <thead>
                   <tr>
-                    <td><code>{{ v.id }}</code></td>
-                    <td><code>{{ v.version }}</code></td>
-                    <td><span class="badge neutral">{{ v.channel }}</span></td>
-                    <td style="color:var(--muted);">{{ v.notes or "-" }}</td>
+                    <th>ID</th>
+                    <th>Version</th>
+                    <th>Channel</th>
+                    <th>Notes</th>
                   </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {% for v in versions %}
+                    <tr>
+                      <td><code>{{ v.id }}</code></td>
+                      <td><code>{{ v.version }}</code></td>
+                      <td><span class="badge neutral">{{ v.channel }}</span></td>
+                      <td style="color:var(--muted);">{{ v.notes or "-" }}</td>
+                    </tr>
+                  {% endfor %}
+                </tbody>
+              </table>
+            </div>
           </div>
 
         </div>
@@ -797,7 +892,6 @@
         }
       });
     }
-
     updateDaysLeftBadges();
 
     // Helper: token from URL
@@ -930,7 +1024,6 @@
         setTimeout(() => location.reload(), 650);
       }));
     });
-
   </script>
 </body>
 </html>
