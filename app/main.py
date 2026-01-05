@@ -1,6 +1,9 @@
 import os
+from datetime import timedelta
+from sqlalchemy import select, delete
 from datetime import datetime, timedelta, timezone
 from fastapi import FastAPI, Depends, HTTPException, Request, Form
+
 
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.templating import Jinja2Templates
@@ -133,6 +136,54 @@ def admin_block_license(
     db.commit()
     return {"ok": True}
 
+@app.post("/admin/license/adjust")
+def admin_adjust_license(
+    request: Request,
+    license_key: str = Form(...),
+    days_delta: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    lic = db.execute(
+        select(License).where(License.license_key == license_key.strip())
+    ).scalars().first()
+
+    if not lic:
+        raise HTTPException(status_code=404, detail="license not found")
+
+    lic.expires_at = lic.expires_at + timedelta(days=days_delta)
+
+    # Optional safety: prevent setting expiry earlier than "now"
+    # If you want to allow past expiry dates, remove these 2 lines:
+    if lic.expires_at < now_utc():
+        lic.expires_at = now_utc()
+
+    db.commit()
+    return {"ok": True, "expires_at": lic.expires_at.isoformat()}
+
+
+@app.post("/admin/license/delete")
+def admin_delete_license(
+    request: Request,
+    license_key: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    require_admin(request)
+
+    lic = db.execute(
+        select(License).where(License.license_key == license_key.strip())
+    ).scalars().first()
+
+    if not lic:
+        raise HTTPException(status_code=404, detail="license not found")
+
+    # Hard delete: remove devices first, then license
+    db.execute(delete(Device).where(Device.license_id == lic.id))
+    db.execute(delete(License).where(License.id == lic.id))
+    db.commit()
+
+    return {"ok": True}
 
 @app.post("/admin/company/update_control")
 def admin_update_control(
