@@ -265,7 +265,7 @@
       font-size: 12px;
     }
 
-    /* Days-left badge */
+    /* Badges */
     .badge{
       display:inline-flex;
       align-items:center;
@@ -561,8 +561,9 @@
                   <th>License key</th>
                   <th style="width:110px;">Active</th>
                   <th>Expires</th>
+                  <th style="width:140px;">Devices</th>
                   <th style="width:150px;">Days left</th>
-                  <th style="width:520px;">Actions</th>
+                  <th style="width:560px;">Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -584,9 +585,27 @@
                       {% endif %}
                     </td>
                     <td>{{ l.expires_at }}</td>
+
+                    <!-- Devices (used / max) -->
+                    <td>
+                      {% set used = (l.device_count or 0) %}
+                      {% set maxd = (l.max_devices or 0) %}
+
+                      {% if maxd > 0 and used >= maxd %}
+                        <span class="badge bad">{{ used }} / {{ maxd }}</span>
+                      {% elif maxd > 0 and used >= (maxd - 1) %}
+                        <span class="badge warn">{{ used }} / {{ maxd }}</span>
+                      {% else %}
+                        <span class="badge good">{{ used }} / {{ maxd }}</span>
+                      {% endif %}
+                    </td>
+
+                    <!-- Days left -->
                     <td>
                       <span class="badge neutral js-daysleft" data-expires="{{ l.expires_at.isoformat() }}">…</span>
                     </td>
+
+                    <!-- Actions -->
                     <td>
                       <div style="display:flex; gap:8px; flex-wrap:wrap;">
                         <!-- extend -->
@@ -601,8 +620,9 @@
                         <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-180">-180</button>
                         <button class="btn js-adjust" type="button" data-key="{{ l.license_key }}" data-delta="-365">-365</button>
 
-                        <!-- block + delete -->
+                        <!-- block + reset + delete -->
                         <button class="btn bad js-block" type="button" data-key="{{ l.license_key }}">Block</button>
+                        <button class="btn warn js-reset-devices" type="button" data-key="{{ l.license_key }}">Reset Devices</button>
                         <button class="btn bad js-delete" type="button" data-key="{{ l.license_key }}">Delete</button>
                       </div>
                     </td>
@@ -876,6 +896,21 @@
         toast('warn', 'Blocking…', key);
         await postForm('/admin/license/block', { license_key: key });
         toast('good', 'Blocked', 'License is now blocked');
+        setTimeout(() => location.reload(), 650);
+      }));
+    });
+
+    // Reset Devices
+    qsa('.js-reset-devices').forEach(btn => {
+      btn.addEventListener('click', () => withButtonLock(btn, async () => {
+        const key = btn.getAttribute('data-key');
+        if (!key) return;
+
+        if (!confirm(`Reset ALL devices for this license?\n\n${key}\n\nThis will clear device slots so the customer can activate again.`)) return;
+
+        toast('warn', 'Resetting devices…', key);
+        await postForm('/admin/license/reset_devices', { license_key: key });
+        toast('good', 'Devices reset', 'All device slots cleared');
         setTimeout(() => location.reload(), 650);
       }));
     });
