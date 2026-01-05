@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>AutoSuite Admin</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto;margin:20px;max-width:1100px}
+    input,select,button{padding:8px;margin:4px}
+    table{border-collapse:collapse;width:100%;margin-top:10px}
+    th,td{border:1px solid #ddd;padding:8px;text-align:left}
+    th{background:#f4f4f4}
+    .row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+    .muted{opacity:.75}
+  </style>
+</head>
+<body>
+  <h2>AutoSuite Admin</h2>
+  <p class="muted">Open this as: <code>/admin?token=YOUR_ADMIN_TOKEN</code></p>
+  <p>BASE_URL: <b>{{ base_url }}</b></p>
+
+  <h3>Create Company</h3>
+  <form class="row" method="post" action="/admin/company/create">
+    <input name="name" placeholder="Company name" required />
+    <input name="allowed_domain" placeholder="Allowed domain (optional) e.g. my.munja-trans.at" />
+    <button>Create</button>
+  </form>
+
+  <h3>Create Script Version</h3>
+  <form class="row" method="post" action="/admin/version/create">
+    <input name="version" placeholder="e.g. 3.2.0" required />
+    <select name="channel">
+      <option value="stable">stable</option>
+      <option value="beta">beta</option>
+    </select>
+    <input name="notes" placeholder="notes (optional)" />
+    <button>Create</button>
+  </form>
+
+  <h3>Create License</h3>
+  <form class="row" method="post" action="/admin/license/create">
+    <input name="company_id" placeholder="Company ID" required />
+    <input name="days" placeholder="Days (e.g. 30)" value="30" />
+    <input name="max_devices" placeholder="Max devices" value="2" />
+    <button>Create</button>
+  </form>
+
+  <h3>Extend License</h3>
+  <form class="row" method="post" action="/admin/license/extend">
+    <input name="license_key" placeholder="AS_xxx" required />
+    <input name="days" placeholder="Days add" value="30" />
+    <button>Extend</button>
+  </form>
+
+  <h3>Block License</h3>
+  <form class="row" method="post" action="/admin/license/block">
+    <input name="license_key" placeholder="AS_xxx" required />
+    <button>Block</button>
+  </form>
+
+  <h3>Update Control (per company)</h3>
+  <form class="row" method="post" action="/admin/company/update_control">
+    <input name="company_id" placeholder="Company ID" required />
+    <select name="channel">
+      <option value="">(no change)</option>
+      <option value="stable">stable</option>
+      <option value="beta">beta</option>
+    </select>
+    <input name="pinned_version" placeholder="Pinned version (optional) e.g. 3.2.0" />
+    <select name="force_update">
+      <option value="">(no change)</option>
+      <option value="true">force_update = true</option>
+      <option value="false">force_update = false</option>
+    </select>
+    <button>Save</button>
+  </form>
+
+  <hr/>
+
+  <h3>Companies</h3>
+  <table>
+    <tr><th>ID</th><th>Name</th><th>Domain</th><th>Channel</th><th>Pinned</th><th>Force</th></tr>
+    {% for c in companies %}
+      <tr>
+        <td>{{ c.id }}</td>
+        <td>{{ c.name }}</td>
+        <td>{{ c.allowed_domain }}</td>
+        <td>{{ c.channel }}</td>
+        <td>{{ c.pinned_version }}</td>
+        <td>{{ c.force_update }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <h3>Licenses</h3>
+  <table>
+    <tr><th>ID</th><th>Company ID</th><th>Key</th><th>Active</th><th>Expires</th><th>Max devices</th></tr>
+    {% for l in licenses %}
+      <tr>
+        <td>{{ l.id }}</td>
+        <td>{{ l.company_id }}</td>
+        <td><code>{{ l.license_key }}</code></td>
+        <td>{{ l.active }}</td>
+        <td>{{ l.expires_at }}</td>
+        <td>{{ l.max_devices }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+
+  <h3>Versions</h3>
+  <table>
+    <tr><th>ID</th><th>Version</th><th>Channel</th><th>Notes</th></tr>
+    {% for v in versions %}
+      <tr>
+        <td>{{ v.id }}</td>
+        <td>{{ v.version }}</td>
+        <td>{{ v.channel }}</td>
+        <td>{{ v.notes }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+</body>
+</html>
