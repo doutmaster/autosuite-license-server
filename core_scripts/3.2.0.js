@@ -52,8 +52,7 @@ async function waitFor(cond,timeout,token,poll=150){const t0=Date.now();while(Da
 function setVal(el,v){if(!el)return;el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}
 
 /* ---------------- KM helpers ---------------- */
-function parseKmInt\(s\)\{[^
-]*\}
+function parseKmInt(s){if(!s)return 0;const m=String(s).replace(/,/g,'.').match(/\d+(\.\d+)?/);if(!m)return 0;const n=Math.floor(parseFloat(m[0]));return isNaN(n)?0:n;}
 function parseOtHours(v){const n=parseFloat(String(v||'').replace(',','.'));return (isNaN(n)||n<0)?0:n;}
 function formatDashKmDot00(n){const i=parseKmInt(n);return `${i}.00`;}
 function setDashKmDot00FromInt(k){const v=formatDashKmDot00(k);const d=$('#mt_km'); if(d)d.value=v;persistProfileLastKm(v);}
