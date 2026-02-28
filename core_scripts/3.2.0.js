@@ -1,4 +1,4 @@
-// AutoSuite CORE v3.3.4 (NO CUTS: keep all forms + Fix: Select2 Date/Driver/Vehicle + NET OT + RP>=9h + SIGNATURE replay into modal + click "Korrektur beenden" + auto clean duplicates after month)
+// AutoSuite CORE v3.3.5 (FIX: Flatpickr Arbeitsbeginn/Arbeitsende write) + keeps ALL original flows/forms
 (function () {
   "use strict";
 
@@ -34,7 +34,6 @@
     monthTargetNet: null,
     monthBaseNet: null,
     monthOvertimeTarget: null,
-    autoCleanAfterRunDone: false,
   };
 
   /* ---------------- Utils ---------------- */
@@ -206,10 +205,8 @@
 
   /* ---------------- Signature replay into MODAL (kbw-signature) ---------------- */
   function findModalSignatureCanvas(modal) {
-    // Your HTML: <canvas id="signature_canvas">
     return modal.querySelector("#signature_canvas") || modal.querySelector("#signature canvas") || modal.querySelector("canvas#signature_canvas");
   }
-
   function dispatchPointerLike(canvas, type, clientX, clientY) {
     const opts = { bubbles: true, cancelable: true, clientX, clientY };
     try {
@@ -220,12 +217,10 @@
         canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
       }
     } catch {
-      // worst-case: mouse events only
       const map = { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
       canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
     }
   }
-
   async function replaySignatureIntoModal(modal, token) {
     requireToken(token);
     if (!sigPadHasInk() || !dashSig.strokes.length) return false;
@@ -236,13 +231,11 @@
       return false;
     }
 
-    // Clear visual canvas (plugin may also clear on its own, but we do visual reset)
     try {
       const ctx = sigCanvas.getContext("2d");
       ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
     } catch {}
 
-    // Click/focus on signature area to ensure plugin is active
     try {
       sigCanvas.scrollIntoView({ block: "center" });
       sigCanvas.focus?.();
@@ -253,7 +246,6 @@
 
     const rect = sigCanvas.getBoundingClientRect();
 
-    // Replay strokes as pointer events so kbw-signature records it
     for (const stroke of dashSig.strokes) {
       requireToken(token);
       if (!stroke || stroke.length < 2) continue;
@@ -280,7 +272,6 @@
       await cancellableSleep(40, token);
     }
 
-    // Also draw visually (in case plugin ignores events, still shows signature)
     try {
       const ctx = sigCanvas.getContext("2d");
       ctx.lineWidth = 2;
@@ -303,18 +294,14 @@
 
   function findKorrekturBeendenButton(modal) {
     const btns = Array.from(modal.querySelectorAll("button, a, input[type='button'], input[type='submit']"));
-    const wanted = ["korrektur beenden", "korrektur", "beenden"];
     for (const el of btns) {
       const t = (el.textContent || el.value || "").trim().toLowerCase();
-      if (!t) continue;
       if (t.includes("korrektur beenden")) return el;
     }
-    // fallback: any element containing both words
     for (const el of btns) {
       const t = (el.textContent || el.value || "").trim().toLowerCase();
-      if (wanted.every((w) => t.includes(w))) return el;
+      if (t.includes("korrektur") && t.includes("beenden")) return el;
     }
-    // fallback: data-action / title
     for (const el of btns) {
       const title = (el.getAttribute("title") || "").toLowerCase();
       const da = (el.getAttribute("data-action") || "").toLowerCase();
@@ -322,7 +309,6 @@
     }
     return null;
   }
-
   async function clickKorrekturBeenden(modal, token) {
     const btn = findKorrekturBeendenButton(modal);
     if (!btn) {
@@ -767,7 +753,7 @@
     applyMinimizedUI(isMin);
   }
 
-  /* ---------------- TABLE + DATE detection (Fix for td.sorting_1) ---------------- */
+  /* ---------------- TABLE + DATE detection ---------------- */
   function getRowDate(tr) {
     const td = tr.querySelector("td.sorting_1");
     const s1 = (td?.textContent || "").trim();
@@ -823,13 +809,75 @@
   function q(modal, sel) {
     return modal.querySelector(sel);
   }
+
+  // ✅ FIX: Flatpickr-aware setter (Arbeitsbeginn/Arbeitsende are flatpickr-input)
   function setVal(el, val) {
-    if (!el) return;
-    el.focus();
-    el.value = val;
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
+    if (!el) return false;
+
+    try {
+      el.removeAttribute("readonly");
+    } catch {}
+
+    const isFlatpickr = el.classList && el.classList.contains("flatpickr-input") && el._flatpickr;
+
+    if (isFlatpickr) {
+      const fp = el._flatpickr;
+      // try multiple parse formats (time-only + datetime + date)
+      const formats = ["H:i", "H:i:S", "d.m.Y H:i", "d.m.Y H:i:S", "d.m.Y"];
+      let ok = false;
+      for (const fmt of formats) {
+        try {
+          fp.setDate(val, true, fmt); // triggerChange=true
+          ok = true;
+          break;
+        } catch {}
+      }
+      if (!ok) {
+        try {
+          el.value = val;
+        } catch {}
+        try {
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        } catch {}
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch {}
+      }
+      try {
+        el.blur();
+      } catch {}
+      return true;
+    }
+
+    // normal inputs: native setter (framework-safe)
+    const proto = Object.getPrototypeOf(el);
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    const setter = desc && desc.set ? desc.set : null;
+
+    try {
+      el.focus();
+    } catch {}
+
+    try {
+      if (setter) setter.call(el, val);
+      else el.value = val;
+    } catch {
+      el.value = val;
+    }
+
+    try {
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    } catch {}
+    try {
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } catch {}
+    try {
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+    } catch {}
+
+    return true;
   }
+
   async function waitForModal(token) {
     const t0 = Date.now();
     while (Date.now() - t0 < DELAYS.modal) {
@@ -1166,10 +1214,13 @@
     return genPlanUPS(dateStr);
   }
 
-  /* ---------------- Completion helpers (same behavior) ---------------- */
+  /* ---------------- Completion helpers ---------------- */
   function getDayStatus(modal) {
     const start = q(modal, "#start");
+    const end = q(modal, "#end");
+
     const hasStart = !!(start && start.value && start.value.trim().length >= 4);
+    const hasEnd = !!(end && end.value && end.value.trim().length >= 4);
 
     const vehRow = q(modal, "#vehicle_dataList_body tr");
     const hasVehicleRow = !!vehRow;
@@ -1194,8 +1245,8 @@
       pauses.push({ type: kind, s: timeStrToMins(s), e: timeStrToMins(e), raw: type });
     }
 
-    const isComplete = hasStart && hasVehicleRow && hasLenkStart && hasLenkEnd && hasEndKm && pauses.length >= 3;
-    return { hasStart, hasVehicleRow, hasLenkStart, hasLenkEnd, hasEndKm, pauses, isComplete };
+    const isComplete = hasStart && hasEnd && hasVehicleRow && hasLenkStart && hasLenkEnd && hasEndKm && pauses.length >= 3;
+    return { hasStart, hasEnd, hasVehicleRow, hasLenkStart, hasLenkEnd, hasEndKm, pauses, isComplete };
   }
 
   function pauseExists(existing, type, s, e) {
@@ -1247,7 +1298,7 @@
     }
   }
 
-  /* ---------------- Core day completion (signature + korrektur beenden) ---------------- */
+  /* ---------------- Core day completion (FIXED start/end) ---------------- */
   async function completeDayIfNeeded(modal, dateStr, driver, token) {
     requireToken(token);
 
@@ -1265,10 +1316,28 @@
       setDashKmDot00FromInt(endInt);
       log(`Übersprungen (vollständig): ${dateStr} — End-KM übernommen: ${endInt}`);
     } else {
+      // ✅ FIX: Always set both Arbeitsbeginn + Arbeitsende via flatpickr-aware setVal
       if (!status.hasStart) {
-        setVal(q(modal, "#start"), toTimeStr(plan.start));
-        await cancellableSleep(DELAYS.step, token);
+        const ab = q(modal, "#start");
+        if (ab) {
+          setVal(ab, toTimeStr(plan.start));
+          await cancellableSleep(250, token);
+        } else {
+          log("❌ Arbeitsbeginn Feld (#start) nicht gefunden");
+        }
       }
+      if (!status.hasEnd) {
+        const ae = q(modal, "#end");
+        if (ae) {
+          setVal(ae, toTimeStr(plan.end));
+          await cancellableSleep(250, token);
+        } else {
+          log("❌ Arbeitsende Feld (#end) nicht gefunden");
+        }
+      }
+
+      // re-check after set
+      status = getDayStatus(modal);
 
       if (!status.hasVehicleRow) {
         const fzg = ($("#mt_fzg")?.value || "").trim();
@@ -1364,14 +1433,14 @@
       log(`✅ ${driver}: ${dateStr} — Start ${toTimeStr(plan.start)} End ${toTimeStr(plan.end)} | RP ${plan.ru.end - plan.ru.start}min (Regel ok)`);
     }
 
-    // ✅ ALWAYS push signature into modal before finishing correction
+    // Always push signature into modal before finishing correction
     await replaySignatureIntoModal(modal, token);
     await cancellableSleep(200, token);
 
-    // ✅ click "Korrektur beenden"
+    // Click "Korrektur beenden"
     await clickKorrekturBeenden(modal, token);
 
-    // fallback: if still open, try close button
+    // Fallback close
     await cancellableSleep(450, token);
     q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
   }
@@ -1396,9 +1465,7 @@
       state.monthBaseNet = built.baseNet;
       state.monthOvertimeTarget = built.overtimeTarget;
       state.monthTargetNet = built.targetNet;
-      log(
-        `📊 Overtime-Plan: Basis ${Math.round(built.baseNet / 60)}h + Ziel-OT ${Math.round(built.overtimeTarget / 60)}h ⇒ Ziel NET ${Math.round(built.targetNet / 60)}h`
-      );
+      log(`📊 Overtime-Plan: Basis ${Math.round(built.baseNet / 60)}h + Ziel-OT ${Math.round(built.overtimeTarget / 60)}h ⇒ Ziel NET ${Math.round(built.targetNet / 60)}h`);
     } else {
       log("ℹ️ Overtime-Plan konnte nicht erstellt werden (keine Datumszeilen gefunden).");
     }
@@ -1560,7 +1627,6 @@
       await cancellableSleep(DELAYS.openWait, token);
       await cleanDuplicatesInOpenModal(modal, token);
 
-      // finish correction + close
       await clickKorrekturBeenden(modal, token);
       await cancellableSleep(450, token);
       q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
@@ -1570,8 +1636,6 @@
     }
   }
   async function cleanAllPagesForCurrentDriver(token) {
-    // NOTE: If your table paginates, we keep the original behavior (current page).
-    // If you want full pagination later, send the "Next" button HTML and we add it without removing any process.
     await cleanPageCurrentDriver(token);
   }
 
@@ -1579,7 +1643,10 @@
   function parseDriverList() {
     const raw = ($("#mt_driver_list")?.value || "").trim();
     if (!raw) return [];
-    return raw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    return raw
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
   }
 
   async function runMultiDrivers(token) {
@@ -1612,7 +1679,6 @@
 
       await runAuto(token);
 
-      // ✅ IMPORTANT: after month is finished, start from beginning to delete double breaks/SO/RP (your request)
       log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${name}`);
       await cleanAllPagesForCurrentDriver(token);
 
@@ -1623,7 +1689,7 @@
     log("✅ Multi fertig");
   }
 
-  /* ---------------- Buttons wiring (KEEP ALL FORMS + auto clean after run) ---------------- */
+  /* ---------------- Buttons wiring (KEEP ALL FORMS) ---------------- */
   function wireButtons() {
     $("#mt_stop").addEventListener("click", () => {
       state.runToken++;
@@ -1671,7 +1737,6 @@
 
         await runAuto(token);
 
-        // ✅ IMPORTANT: After all days finished, run duplicate cleaner from beginning (your request)
         log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${drv}`);
         await cleanAllPagesForCurrentDriver(token);
       } catch (e) {
