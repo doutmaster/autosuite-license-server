@@ -1,16 +1,16 @@
-// AutoSuite CORE v3.3.3 (KEEP ALL FORMS + Fix: Date td.sorting_1 + Select2 Driver + Select2 Vehicle + Overtime NET + RP 9h rule)
+// AutoSuite CORE v3.3.4 (NO CUTS: keep all forms + Fix: Select2 Date/Driver/Vehicle + NET OT + RP>=9h + SIGNATURE replay into modal + click "Korrektur beenden" + auto clean duplicates after month)
 (function () {
   "use strict";
 
   /* ---------------- Base config ---------------- */
   const DELAYS = {
-    modal: 5000,
-    openWait: 5000,
-    step: 900,
+    modal: 7000,
+    openWait: 1200,
+    step: 700,
     ajax: 1200,
     retry: 250,
-    modalClose: 3000,
-    afterClose: 5000,
+    modalClose: 6000,
+    afterClose: 900,
   };
 
   const KEYS = { uiMin: "master_ui_minimized", mode: "master_mode", profiles: "master_profiles_v1" };
@@ -34,6 +34,7 @@
     monthTargetNet: null,
     monthBaseNet: null,
     monthOvertimeTarget: null,
+    autoCleanAfterRunDone: false,
   };
 
   /* ---------------- Utils ---------------- */
@@ -203,6 +204,140 @@
     });
   }
 
+  /* ---------------- Signature replay into MODAL (kbw-signature) ---------------- */
+  function findModalSignatureCanvas(modal) {
+    // Your HTML: <canvas id="signature_canvas">
+    return modal.querySelector("#signature_canvas") || modal.querySelector("#signature canvas") || modal.querySelector("canvas#signature_canvas");
+  }
+
+  function dispatchPointerLike(canvas, type, clientX, clientY) {
+    const opts = { bubbles: true, cancelable: true, clientX, clientY };
+    try {
+      if (typeof PointerEvent !== "undefined") {
+        canvas.dispatchEvent(new PointerEvent(type, { ...opts, pointerId: 1, pointerType: "pen", buttons: 1 }));
+      } else {
+        const map = { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
+        canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
+      }
+    } catch {
+      // worst-case: mouse events only
+      const map = { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
+      canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
+    }
+  }
+
+  async function replaySignatureIntoModal(modal, token) {
+    requireToken(token);
+    if (!sigPadHasInk() || !dashSig.strokes.length) return false;
+
+    const sigCanvas = findModalSignatureCanvas(modal);
+    if (!sigCanvas) {
+      log("ℹ️ Signatur-Canvas im Modal nicht gefunden (#signature_canvas).");
+      return false;
+    }
+
+    // Clear visual canvas (plugin may also clear on its own, but we do visual reset)
+    try {
+      const ctx = sigCanvas.getContext("2d");
+      ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+    } catch {}
+
+    // Click/focus on signature area to ensure plugin is active
+    try {
+      sigCanvas.scrollIntoView({ block: "center" });
+      sigCanvas.focus?.();
+      sigCanvas.click();
+    } catch {}
+
+    await cancellableSleep(150, token);
+
+    const rect = sigCanvas.getBoundingClientRect();
+
+    // Replay strokes as pointer events so kbw-signature records it
+    for (const stroke of dashSig.strokes) {
+      requireToken(token);
+      if (!stroke || stroke.length < 2) continue;
+
+      const p0 = stroke[0];
+      const x0 = rect.left + p0.x * rect.width;
+      const y0 = rect.top + p0.y * rect.height;
+
+      dispatchPointerLike(sigCanvas, "pointerdown", x0, y0);
+      await cancellableSleep(16, token);
+
+      for (let i = 1; i < stroke.length; i++) {
+        const p = stroke[i];
+        const x = rect.left + p.x * rect.width;
+        const y = rect.top + p.y * rect.height;
+        dispatchPointerLike(sigCanvas, "pointermove", x, y);
+        await cancellableSleep(10, token);
+      }
+
+      const plast = stroke[stroke.length - 1];
+      const xl = rect.left + plast.x * rect.width;
+      const yl = rect.top + plast.y * rect.height;
+      dispatchPointerLike(sigCanvas, "pointerup", xl, yl);
+      await cancellableSleep(40, token);
+    }
+
+    // Also draw visually (in case plugin ignores events, still shows signature)
+    try {
+      const ctx = sigCanvas.getContext("2d");
+      ctx.lineWidth = 2;
+      ctx.lineCap = "round";
+      ctx.strokeStyle = "#111";
+      for (const stroke of dashSig.strokes) {
+        if (!stroke || stroke.length < 2) continue;
+        ctx.beginPath();
+        ctx.moveTo(stroke[0].x * sigCanvas.width, stroke[0].y * sigCanvas.height);
+        for (let i = 1; i < stroke.length; i++) {
+          ctx.lineTo(stroke[i].x * sigCanvas.width, stroke[i].y * sigCanvas.height);
+        }
+        ctx.stroke();
+      }
+    } catch {}
+
+    log("✍️ Signatur ins Modal übertragen.");
+    return true;
+  }
+
+  function findKorrekturBeendenButton(modal) {
+    const btns = Array.from(modal.querySelectorAll("button, a, input[type='button'], input[type='submit']"));
+    const wanted = ["korrektur beenden", "korrektur", "beenden"];
+    for (const el of btns) {
+      const t = (el.textContent || el.value || "").trim().toLowerCase();
+      if (!t) continue;
+      if (t.includes("korrektur beenden")) return el;
+    }
+    // fallback: any element containing both words
+    for (const el of btns) {
+      const t = (el.textContent || el.value || "").trim().toLowerCase();
+      if (wanted.every((w) => t.includes(w))) return el;
+    }
+    // fallback: data-action / title
+    for (const el of btns) {
+      const title = (el.getAttribute("title") || "").toLowerCase();
+      const da = (el.getAttribute("data-action") || "").toLowerCase();
+      if (title.includes("korrektur") || da.includes("korrektur")) return el;
+    }
+    return null;
+  }
+
+  async function clickKorrekturBeenden(modal, token) {
+    const btn = findKorrekturBeendenButton(modal);
+    if (!btn) {
+      log("ℹ️ Button 'Korrektur beenden' nicht gefunden (Selector).");
+      return false;
+    }
+    try {
+      btn.scrollIntoView({ block: "center" });
+    } catch {}
+    await cancellableSleep(100, token);
+    btn.click();
+    log("✅ 'Korrektur beenden' geklickt.");
+    return true;
+  }
+
   /* ---------------- Driver (Select2 FIX) ---------------- */
   function getSelect2Container() {
     return $("#select2-staff_id-container") || $('span.select2-selection__rendered[id*="staff_id"]');
@@ -313,7 +448,7 @@
     await cancellableSleep(350, token);
     return true;
   }
-  async function selectVehicleByText(modal, text, token) {
+  async function selectVehicleByText(_modal, text, token) {
     const t = normName(text);
     if (!t) return false;
 
@@ -334,7 +469,6 @@
         }
       }
     }
-
     return await selectVehicleByTextSelect2UI(text, token);
   }
   async function waitForVehicleApplied(expectedText, token) {
@@ -418,6 +552,7 @@
       dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
       dashSig.cur = [];
       dashSig.hasInk = true;
+
       const c = $("#mt_sig_canvas");
       if (c) {
         const ctx = c.getContext("2d");
@@ -578,7 +713,6 @@
     `;
     document.body.appendChild(wrap);
 
-    // Toggle icon
     const toggle = document.createElement("button");
     toggle.className = "mt-toggle";
     toggle.id = "mt_toggle_btn";
@@ -1113,7 +1247,7 @@
     }
   }
 
-  /* ---------------- Core day completion (FIXED vehicle selection) ---------------- */
+  /* ---------------- Core day completion (signature + korrektur beenden) ---------------- */
   async function completeDayIfNeeded(modal, dateStr, driver, token) {
     requireToken(token);
 
@@ -1137,7 +1271,6 @@
       }
 
       if (!status.hasVehicleRow) {
-        // ✅ SELECT VEHICLE via Select2 / hidden select
         const fzg = ($("#mt_fzg")?.value || "").trim();
         if (fzg) {
           const ok = await selectVehicleByText(modal, fzg, token);
@@ -1151,7 +1284,6 @@
           await keepStartKmStable(modal, dashStartKmInt, token);
         }
 
-        // add vehicle row
         q(modal, "#btn_vehicle_add")?.click();
         await cancellableSleep(DELAYS.ajax, token);
 
@@ -1159,9 +1291,11 @@
         status = getDayStatus(modal);
       }
 
-      // update vehicle end / km if missing
       if (!status.hasLenkStart || !status.hasLenkEnd || !status.hasEndKm) {
-        const pencil = q(modal, "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success");
+        const pencil = q(
+          modal,
+          "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success"
+        );
         if (pencil) {
           pencil.closest("a,button")?.click();
           await cancellableSleep(DELAYS.ajax, token);
@@ -1186,7 +1320,6 @@
         status = getDayStatus(modal);
       }
 
-      // Pausen (SO/SO/RP/SO)
       const need = [
         { type: "SO", val: 2, s: plan.so1.start, e: plan.so1.end },
         { type: "SO", val: 2, s: plan.so2.start, e: plan.so2.end },
@@ -1206,7 +1339,10 @@
         const lenkBeginMins = getSecondSoEndMins(existing, plan);
         const desired = toTimeStr(lenkBeginMins);
 
-        const pencil2 = q(modal, "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success");
+        const pencil2 = q(
+          modal,
+          "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success"
+        );
         if (pencil2) {
           pencil2.closest("a,button")?.click();
           await cancellableSleep(DELAYS.ajax, token);
@@ -1228,7 +1364,15 @@
       log(`✅ ${driver}: ${dateStr} — Start ${toTimeStr(plan.start)} End ${toTimeStr(plan.end)} | RP ${plan.ru.end - plan.ru.start}min (Regel ok)`);
     }
 
-    // close modal
+    // ✅ ALWAYS push signature into modal before finishing correction
+    await replaySignatureIntoModal(modal, token);
+    await cancellableSleep(200, token);
+
+    // ✅ click "Korrektur beenden"
+    await clickKorrekturBeenden(modal, token);
+
+    // fallback: if still open, try close button
+    await cancellableSleep(450, token);
     q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
   }
 
@@ -1252,7 +1396,9 @@
       state.monthBaseNet = built.baseNet;
       state.monthOvertimeTarget = built.overtimeTarget;
       state.monthTargetNet = built.targetNet;
-      log(`📊 Overtime-Plan: Basis ${Math.round(built.baseNet / 60)}h + Ziel-OT ${Math.round(built.overtimeTarget / 60)}h ⇒ Ziel NET ${Math.round(built.targetNet / 60)}h (final ~${Math.round(built.finalNet / 60)}h)`);
+      log(
+        `📊 Overtime-Plan: Basis ${Math.round(built.baseNet / 60)}h + Ziel-OT ${Math.round(built.overtimeTarget / 60)}h ⇒ Ziel NET ${Math.round(built.targetNet / 60)}h`
+      );
     } else {
       log("ℹ️ Overtime-Plan konnte nicht erstellt werden (keine Datumszeilen gefunden).");
     }
@@ -1413,12 +1559,19 @@
       if (!modal) continue;
       await cancellableSleep(DELAYS.openWait, token);
       await cleanDuplicatesInOpenModal(modal, token);
+
+      // finish correction + close
+      await clickKorrekturBeenden(modal, token);
+      await cancellableSleep(450, token);
       q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
+
       await waitForModalClosed(token);
       await cancellableSleep(DELAYS.afterClose, token);
     }
   }
   async function cleanAllPagesForCurrentDriver(token) {
+    // NOTE: If your table paginates, we keep the original behavior (current page).
+    // If you want full pagination later, send the "Next" button HTML and we add it without removing any process.
     await cleanPageCurrentDriver(token);
   }
 
@@ -1459,7 +1612,8 @@
 
       await runAuto(token);
 
-      log(`🧹 Starte Duplikate-Cleaner (ganzer Fahrer): ${name}`);
+      // ✅ IMPORTANT: after month is finished, start from beginning to delete double breaks/SO/RP (your request)
+      log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${name}`);
       await cleanAllPagesForCurrentDriver(token);
 
       state.currentDriverName = null;
@@ -1469,7 +1623,7 @@
     log("✅ Multi fertig");
   }
 
-  /* ---------------- Buttons wiring (KEEP ALL FORMS) ---------------- */
+  /* ---------------- Buttons wiring (KEEP ALL FORMS + auto clean after run) ---------------- */
   function wireButtons() {
     $("#mt_stop").addEventListener("click", () => {
       state.runToken++;
@@ -1514,7 +1668,12 @@
           log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${drv}`);
           throw ABORT;
         }
+
         await runAuto(token);
+
+        // ✅ IMPORTANT: After all days finished, run duplicate cleaner from beginning (your request)
+        log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${drv}`);
+        await cleanAllPagesForCurrentDriver(token);
       } catch (e) {
         if (e === ABORT) log("Gestoppt");
         else logErr(e, "Auto(1)");
