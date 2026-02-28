@@ -1,1870 +1,1158 @@
-// AutoSuite CORE v3.3.6 (FIX v2: Flatpickr TIME UI hour/minute + setDate(Date) + events) + keeps ALL original flows/forms
-(function () {
-  "use strict";
+// AutoSuite CORE v3.2.0
+(function(){
+'use strict';
 
-  /* ---------------- Base config ---------------- */
-  const DELAYS = {
-    modal: 7000,
-    openWait: 1200,
-    step: 700,
-    ajax: 1200,
-    retry: 250,
-    modalClose: 6000,
-    afterClose: 900,
+/* ---------------- Base config ---------------- */
+const DELAYS={modal:5000,openWait:5000,step:900,ajax:1200,swal:1200,retry:250,modalClose:3000,afterClose:5000,pageTurn:1100,tableRedrawPoll:150,tableRedrawTimeout:6000};
+const KEYS={
+  uiMin:'master_ui_minimized',
+  mode:'master_mode',
+  profiles:'master_profiles_v1'
+};
+
+const MODES={
+  UPS:{label:'UPS',  accent:'#ffcb05', bg:'#221b17', border:'#5a4639', muted:'#3a2e28', primary:'#745e4d', iconText:'UPS'},
+  DPD:{label:'DPD',  accent:'#dc2626', bg:'#1f0f12', border:'#5c1c20', muted:'#2b1418', primary:'#7f1d1d', iconText:'DPD'},
+  GLS:{label:'GLS',  accent:'#f59e0b', bg:'#1b160e', border:'#5a4521', muted:'#2a2315', primary:'#7c5a16', iconText:'GLS'}
+};
+
+const state={
+  logs:[],
+  running:false,
+  runToken:0,
+  processedDates:new Set(),
+  lastPickedDate:null,
+  ready:false,
+  currentDriverName:null,
+  mode:'UPS',
+  otPlan:null,
+  // for pause-cleaner flow
+  cleanedThisDriver:false
+};
+
+/* ---------------- Utils ---------------- */
+const $=(s,r=document)=>r.querySelector(s);
+const $$=(s,r=document)=>Array.from(r.querySelectorAll(s));
+const q=(m,s)=>m.querySelector(s);
+const qa=(m,s)=>Array.from(m.querySelectorAll(s));
+const pad2=n=>String(n).padStart(2,'0');
+const toTimeStr=m=>`${pad2(Math.floor(m/60))}:${pad2(m%60)}`;
+const timeStrToMins=t=>{const [h,m]=(t||'').split(':').map(Number);return(isNaN(h)||isNaN(m))?null:(h*60+m);};
+const randInt=(a,b)=>Math.floor(Math.random()*(b-a+1))+a;
+const deDateStrToDate=s=>{const [d,m,y]=s.split('.').map(Number);return new Date(y,m-1,d);};
+function GM_SetValueSafe(k,v){try{GM_setValue(k,v);}catch{}}
+function GM_GetValueSafe(k,d){try{return GM_getValue(k,d);}catch{return d;}}
+function log(m){const ts=new Date().toLocaleTimeString();state.logs.unshift(`[${ts}] ${m}`);if(state.logs.length>350)state.logs.length=350;const box=$('#mt_log');if(box)box.textContent=state.logs.join('\n');}
+function logErr(e, where=''){const msg = (e && (e.stack || e.message)) ? (e.stack || e.message) : String(e);log(`❌ ERROR ${where ? '('+where+')' : ''}: ${msg}`);console.error('MASTER AutoSuite ERROR', where, e);}
+const ABORT=Symbol('ABORT');
+function requireToken(t){if(state.runToken!==t)throw ABORT;}
+function setRunning(on){state.running=on;}
+async function cancellableSleep(ms,token,step=100){const s=Date.now();while(Date.now()-s<ms){requireToken(token);await new Promise(r=>setTimeout(r,Math.min(step,ms)));}}
+async function waitFor(cond,timeout,token,poll=150){const t0=Date.now();while(Date.now()-t0<timeout){requireToken(token);const v=cond();if(v)return v;await cancellableSleep(poll,token);}return null;}
+function setVal(el,v){if(!el)return;el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));el.dispatchEvent(new Event('change',{bubbles:true}));}
+
+/* ---------------- KM helpers ---------------- */
+function parseKmInt\(s\)\{[^
+]*\}
+function parseOtHours(v){const n=parseFloat(String(v||'').replace(',','.'));return (isNaN(n)||n<0)?0:n;}
+function formatDashKmDot00(n){const i=parseKmInt(n);return `${i}.00`;}
+function setDashKmDot00FromInt(k){const v=formatDashKmDot00(k);const d=$('#mt_km'); if(d)d.value=v;persistProfileLastKm(v);}
+
+/* ---------------- Driver / Profiles ---------------- */
+function normName(name){return (name||'').replace(/\s+/g,' ').trim().toLowerCase();}
+function loadProfiles(){const raw=GM_GetValueSafe(KEYS.profiles,'');if(!raw) return {};try{return JSON.parse(raw)||{};}catch{return {};}}
+function saveProfiles(obj){GM_SetValueSafe(KEYS.profiles, JSON.stringify(obj||{}));}
+function getSelectedDriverName(){const txt = ($('#select2-staff_id-container')?.textContent || '').trim();if(txt) return txt;const sel = $('#staff_id');const opt = sel?.selectedOptions?.[0];return (opt?.textContent||'').trim();}
+function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return false;const target=(name||'').trim().toLowerCase();const opts=Array.from(sel.options||[]);const found=opts.find(o => (o.textContent||'').replace(/\s+/g,' ').trim().toLowerCase() === target);if(!found) return false;sel.value=found.value;sel.dispatchEvent(new Event('change',{bubbles:true}));try{ if(window.jQuery) window.jQuery(sel).trigger('change'); }catch{}return true;}
+async function waitForDriverApplied(name, token){const want=normName(name);await waitFor(()=>{const cur=normName(getSelectedDriverName());return (cur && cur===want) ? true : null;}, 8000, token, 150);await cancellableSleep(500, token);}
+
+/* ---------------- Signature pad on DASHBOARD ---------------- */
+let dashSig={drawing:false,strokes:[],cur:[],hasInk:false};
+function setupDashSignaturePad(){
+  const c=$('#mt_sig_canvas'); if(!c) return;
+  const ctx=c.getContext('2d');
+  const clear=()=>{ctx.clearRect(0,0,c.width,c.height);dashSig={drawing:false,strokes:[],cur:[],hasInk:false};$('#mt_sig_status').textContent='Signatur: leer';};
+  const getPos=(e)=>{const r=c.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;const y=(e.clientY-r.top)/r.height;return {x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))};};
+  const redraw=()=>{ctx.clearRect(0,0,c.width,c.height);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#111';
+    const drawStroke=(stroke)=>{if(!stroke||stroke.length<2)return;ctx.beginPath();ctx.moveTo(stroke[0].x*c.width, stroke[0].y*c.height);for(let i=1;i<stroke.length;i++)ctx.lineTo(stroke[i].x*c.width, stroke[i].y*c.height);ctx.stroke();};
+    for(const s of dashSig.strokes) drawStroke(s); if(dashSig.cur?.length) drawStroke(dashSig.cur);
   };
+  c.addEventListener('mousedown',(e)=>{dashSig.drawing=true;dashSig.cur=[getPos(e)];redraw();e.preventDefault();});
+  window.addEventListener('mousemove',(e)=>{if(!dashSig.drawing)return;dashSig.cur.push(getPos(e));dashSig.hasInk=true;redraw();$('#mt_sig_status').textContent='Signatur: OK';});
+  window.addEventListener('mouseup',()=>{if(!dashSig.drawing)return;dashSig.drawing=false;if(dashSig.cur.length>=2)dashSig.strokes.push(dashSig.cur);dashSig.cur=[];redraw();});
+  $('#mt_sig_clear')?.addEventListener('click', clear);
+  clear();
+}
+function sigPadHasInk(){return !!dashSig.hasInk && (dashSig.strokes?.length>0);}
 
-  const KEYS = { uiMin: "master_ui_minimized", mode: "master_mode", profiles: "master_profiles_v1" };
-
-  const MODES = {
-    UPS: { label: "UPS", accent: "#ffcb05", bg: "#221b17", border: "#5a4639", muted: "#3a2e28", primary: "#745e4d", iconText: "UPS" },
-    DPD: { label: "DPD", accent: "#e4002b", bg: "#1a0b0d", border: "#5a1f2b", muted: "#341319", primary: "#7a1f30", iconText: "DPD" },
-    GLS: { label: "GLS", accent: "#0072ce", bg: "#07131d", border: "#1d3a55", muted: "#0f2334", primary: "#1a4e78", iconText: "GLS" },
-  };
-
-  const state = {
-    logs: [],
-    running: false,
-    runToken: 0,
-    processedDates: new Set(),
-    lastPickedDate: null,
-    ready: false,
-    currentDriverName: null,
-    mode: "UPS",
-    monthPlans: null,
-    monthTargetNet: null,
-    monthBaseNet: null,
-    monthOvertimeTarget: null,
-  };
-
-  /* ---------------- Utils ---------------- */
-  const $ = (s, r = document) => r.querySelector(s);
-  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-  const ABORT = Symbol("ABORT");
-
-  function log(msg) {
-    state.logs.push({ t: Date.now(), msg });
-    renderLog();
-  }
-  function logErr(e, ctx) {
-    console.error(ctx, e);
-    log(`❌ ${ctx}: ${e?.message || e}`);
-  }
-  function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
-  }
-  async function cancellableSleep(ms, token) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < ms) {
-      requireToken(token);
-      await sleep(50);
+/* ---------------- Profiles: per-driver, per-mode ---------------- */
+function profileKey(driverName){return `${state.mode}::${normName(driverName)}`;}
+function persistProfileLastKm(kmDot00){
+  const driver = state.currentDriverName || getSelectedDriverName();
+  const name=(driver||'').trim(); if(!name) return;
+  const profiles=loadProfiles();
+  const key=profileKey(name);
+  if(!profiles[key]) profiles[key]={name,mode:state.mode,fahrzeug:'',lastKm:'',sig:null};
+  profiles[key].lastKm = kmDot00;
+  saveProfiles(profiles);
+}
+function saveCurrentSetupToProfile(){
+  const driver = state.currentDriverName || getSelectedDriverName();
+  const name=(driver||'').trim(); if(!name) return false;
+  const fzg = ($('#mt_fzg')?.value||'').trim();
+  const km  = formatDashKmDot00($('#mt_km')?.value||'');
+  if(!fzg || !parseKmInt(km)) return false;
+  if(!sigPadHasInk()) return false;
+  const profiles=loadProfiles();
+  const key=profileKey(name);
+  const otMin=parseOtHours($('#mt_ot_min')?.value);
+  const otMax=parseOtHours($('#mt_ot_max')?.value);
+  profiles[key]={name,mode:state.mode,fahrzeug:fzg,lastKm:km,sig:{strokes: dashSig.strokes},otMin,otMax};
+  saveProfiles(profiles);
+  return true;
+}
+function loadProfileToDashboard(name){
+  const profiles=loadProfiles();
+  const prof=profiles[profileKey(name)];
+  if(!prof) return false;
+  $('#mt_fzg').value = prof.fahrzeug || '';
+  $('#mt_km').value  = formatDashKmDot00(prof.lastKm || '');
+  if($('#mt_ot_min')) $('#mt_ot_min').value = (prof.otMin!=null? String(prof.otMin):'');
+  if($('#mt_ot_max')) $('#mt_ot_max').value = (prof.otMax!=null? String(prof.otMax):'');
+  if(prof.sig?.strokes?.length){
+    dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
+    dashSig.cur=[];dashSig.hasInk=true;
+    const c=$('#mt_sig_canvas'); if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#111';
+      for(const stroke of dashSig.strokes){if(!stroke||stroke.length<2)continue;ctx.beginPath();ctx.moveTo(stroke[0].x*c.width, stroke[0].y*c.height);for(let i=1;i<stroke.length;i++)ctx.lineTo(stroke[i].x*c.width, stroke[i].y*c.height);ctx.stroke();}
+      $('#mt_sig_status').textContent='Signatur: OK';
     }
   }
-  function requireToken(token) {
-    if (!state.running || token !== state.runToken) throw ABORT;
-  }
-  function clamp(n, a, b) {
-    return Math.max(a, Math.min(b, n));
-  }
-  function randInt(a, b) {
-    return Math.floor(Math.random() * (b - a + 1)) + a;
-  }
-  function normName(s) {
-    return String(s || "")
-      .trim()
-      .toLowerCase()
-      .replace(/\s+/g, " ");
-  }
+  return true;
+}
 
-  const DATE_RE = /\b\d{2}\.\d{2}\.\d{4}\b/;
+/* ---------------- Ready gate ---------------- */
+function setReady(on){state.ready=!!on;const b=$('#mt_ready_btn');if(b)b.textContent=state.ready?'✅ ALLES BEREIT':'ALLES BEREIT';}
+async function waitForReady(driverName, token){setReady(false);log(`⏸ Warten auf "ALLES BEREIT" für: ${driverName}`);await waitFor(()=> state.ready ? true : null, 24*60*60*1000, token, 200);log(`▶️ Start für: ${driverName}`);}
 
-  function timeStrToMins(t) {
-    const m = String(t || "").match(/(\d{1,2}):(\d{2})/);
-    if (!m) return 0;
-    return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-  }
-  function toTimeStr(mins) {
-    mins = ((mins % 1440) + 1440) % 1440;
-    const h = Math.floor(mins / 60),
-      m = mins % 60;
-    return String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
-  }
-  function deDateStrToDate(dateStr) {
-    const m = String(dateStr || "").match(/(\d{2})\.(\d{2})\.(\d{4})/);
-    if (!m) return new Date(NaN);
-    return new Date(parseInt(m[3], 10), parseInt(m[2], 10) - 1, parseInt(m[1], 10), 12, 0, 0);
-  }
+/* ---------------- Modal helpers ---------------- */
+async function waitForModal(token){
+  const r=await waitFor(()=>{const m=$('#working_time_modal');if(!m)return null;const shown=m.classList.contains('show') && getComputedStyle(m).display!=='none';return shown?m:null;}, DELAYS.modal+4000, token, 200);
+  return r||$('#working_time_modal');
+}
+async function waitForModalClosed(token){
+  const ok=await waitFor(()=>{const m=$('#working_time_modal');return(!m||!m.classList.contains('show')||getComputedStyle(m).display==='none')?true:null;}, DELAYS.modalClose+4000, token, 150);
+  return !!ok;
+}
+function findConfirmYesButton(){
+  let btn=$('.swal2-container .swal2-confirm.swal2-styled');
+  if(btn)return btn;
+  btn=$$('button,a').find(b=>/^\s*Ja\s*$/i.test(b.textContent||'')&&b.offsetParent!==null);
+  if(btn)return btn;
+  btn=$$('.modal.show .modal-footer .btn-primary, .bootbox .btn-primary, .modal.show .btn.btn-primary').find(b=>/\b(Ja|OK|Ok)\b/i.test(b.textContent||''));
+  return btn||null;
+}
+async function waitForSwalConfirm(token){
+  const dlg=await waitFor(()=>$('.swal2-container')||$('.bootbox')||$('.modal.show .modal-dialog'), 6000, token, 120);
+  if(dlg)log('Bestätigungsdialog erkannt');
+  return await waitFor(()=>findConfirmYesButton(), 6000, token, 150);
+}
 
-  /* ---------------- GM safe access ---------------- */
-  function GM_GetValueSafe(k, d) {
-    try {
-      return GM_getValue(k, d);
-    } catch {
-      return d;
-    }
-  }
-  function GM_SetValueSafe(k, v) {
-    try {
-      GM_setValue(k, v);
-    } catch {}
-  }
+/* ---------------- Theme / UI ---------------- */
+GM_addStyle(`
+.mt-wrap{position:fixed;left:360px;bottom:24px;z-index:999999;display:flex;gap:12px;align-items:flex-start}
+.mt-card{background:var(--mt-bg);color:#eee;border-radius:14px;box-shadow:0 10px 28px rgba(0,0,0,.35);padding:12px;font:12px/1.45 system-ui,Segoe UI,Roboto;min-width:340px;border:1px solid var(--mt-border)}
+.mt-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:10px}
+.mt-title{font-weight:900;letter-spacing:.5px;color:var(--mt-accent);display:flex;align-items:center;gap:8px}
+.mt-minbtn{appearance:none;border:0;border-radius:8px;padding:6px 8px;background:var(--mt-muted);color:#fff;cursor:pointer;font-weight:800}
+.mt-row{display:flex;gap:8px;margin:6px 0;flex-wrap:wrap}
+.mt-btn{appearance:none;border:0;border-radius:10px;padding:8px 10px;cursor:pointer;font-weight:900}
+.mt-btn.primary{background:var(--mt-primary);color:#fff}
+.mt-btn.muted{background:var(--mt-muted);color:#fff}
+.mt-btn.danger{background:#a33;color:#fff}
+.mt-field{display:flex;flex-direction:column;gap:4px;margin-top:6px}
+.mt-field input, .mt-field textarea, .mt-field select{width:100%;padding:6px 8px;border-radius:8px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.14);color:#fff}
+.mt-log{white-space:pre-wrap;background:rgba(0,0,0,.35);border-radius:8px;padding:8px;height:170px;overflow:auto;margin-top:8px;min-width:360px;max-width:660px}
+.mt-sign{margin-top:6px;color:rgba(255,255,255,.75);text-align:center}
+.mt-hidden{display:none !important}
+.mt-toggle{position:fixed;left:360px;bottom:24px;z-index:1000000;background:transparent;border:0;padding:0;cursor:pointer}
+.mt-toggle svg{width:48px;height:48px}
+.mt-sigbox{margin-top:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:8px}
+.mt-sigrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.mt-sigstatus{font-weight:900;color:var(--mt-accent)}
+.mt-canvas{width:100%;height:120px;background:#fff;border-radius:8px;cursor:crosshair}
+.mt-pill{padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-weight:900}
+`);
 
-  /* ---------------- Persistent profiles ---------------- */
-  function loadProfiles() {
-    try {
-      return JSON.parse(GM_GetValueSafe(KEYS.profiles, "{}") || "{}");
-    } catch {
-      return {};
-    }
-  }
-  function saveProfiles(obj) {
-    try {
-      GM_SetValueSafe(KEYS.profiles, JSON.stringify(obj || {}));
-    } catch {}
-  }
+function applyTheme(){
+  const cfg = MODES[state.mode] || MODES.UPS;
+  document.documentElement.style.setProperty('--mt-accent', cfg.accent);
+  document.documentElement.style.setProperty('--mt-bg', cfg.bg);
+  document.documentElement.style.setProperty('--mt-border', cfg.border);
+  document.documentElement.style.setProperty('--mt-muted', cfg.muted);
+  document.documentElement.style.setProperty('--mt-primary', cfg.primary);
+  const title=$('#mt_title');
+  if(title) title.textContent = `AutoSuite MASTER — ${cfg.label}`;
+  const iconText=$('#mt_icon_text');
+  if(iconText) iconText.textContent = cfg.iconText;
+  const modeSel=$('#mt_mode');
+  if(modeSel && modeSel.value!==state.mode) modeSel.value=state.mode;
+}
 
-  /* ---------------- UI helpers ---------------- */
-  function setRunning(on) {
-    state.running = !!on;
-    const b = $("#mt_stop");
-    if (b) b.disabled = !on ? true : false;
-    const s = $("#mt_start_auto");
-    if (s) s.disabled = on;
-    const m = $("#mt_multi_start");
-    if (m) m.disabled = on;
-  }
-  function setReady(on) {
-    state.ready = !!on;
-    const st = $("#mt_sig_status");
-    if (st) st.textContent = state.ready ? "Bereit: OK" : "Bereit: nein";
-  }
-  function renderLog() {
-    const box = $("#mt_log");
-    if (!box) return;
-    const last = state.logs.slice(-14).map((x) => x.msg).join("\n");
-    box.textContent = last;
-    box.scrollTop = box.scrollHeight;
-  }
+function injectUI(){
+  if($('#mt_card')) return;
 
-  /* ---------------- Signature pad (dashboard) ---------------- */
-  const dashSig = { strokes: [], cur: [], hasInk: false };
-  function sigPadHasInk() {
-    return !!dashSig.hasInk;
-  }
-  function normCanvasPoint(e, canvas) {
-    const r = canvas.getBoundingClientRect();
-    const x = (e.clientX - r.left) / r.width;
-    const y = (e.clientY - r.top) / r.height;
-    return { x: clamp(x, 0, 1), y: clamp(y, 0, 1) };
-  }
-  function initSigPad() {
-    const canvas = $("#mt_sig_canvas");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#111";
-    let down = false;
-
-    canvas.addEventListener("pointerdown", (e) => {
-      down = true;
-      dashSig.cur = [normCanvasPoint(e, canvas)];
-      canvas.setPointerCapture(e.pointerId);
-    });
-    canvas.addEventListener("pointermove", (e) => {
-      if (!down) return;
-      dashSig.cur.push(normCanvasPoint(e, canvas));
-      const st = dashSig.cur;
-      if (st.length >= 2) {
-        ctx.beginPath();
-        const a = st[st.length - 2],
-          b = st[st.length - 1];
-        ctx.moveTo(a.x * canvas.width, a.y * canvas.height);
-        ctx.lineTo(b.x * canvas.width, b.y * canvas.height);
-        ctx.stroke();
-      }
-    });
-    canvas.addEventListener("pointerup", () => {
-      if (!down) return;
-      down = false;
-      if (dashSig.cur.length >= 2) {
-        dashSig.strokes.push(dashSig.cur.slice());
-        dashSig.hasInk = true;
-        $("#mt_sig_status").textContent = "Signatur: OK";
-      }
-      dashSig.cur = [];
-    });
-
-    $("#mt_sig_clear")?.addEventListener("click", () => {
-      dashSig.strokes = [];
-      dashSig.cur = [];
-      dashSig.hasInk = false;
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      $("#mt_sig_status").textContent = "Signatur: leer";
-    });
-  }
-
-  /* ---------------- Signature replay into MODAL (kbw-signature) ---------------- */
-  function findModalSignatureCanvas(modal) {
-    return modal.querySelector("#signature_canvas") || modal.querySelector("#signature canvas") || modal.querySelector("canvas#signature_canvas");
-  }
-  function dispatchPointerLike(canvas, type, clientX, clientY) {
-    const opts = { bubbles: true, cancelable: true, clientX, clientY };
-    try {
-      if (typeof PointerEvent !== "undefined") {
-        canvas.dispatchEvent(new PointerEvent(type, { ...opts, pointerId: 1, pointerType: "pen", buttons: 1 }));
-      } else {
-        const map = { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
-        canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
-      }
-    } catch {
-      const map = { pointerdown: "mousedown", pointermove: "mousemove", pointerup: "mouseup" };
-      canvas.dispatchEvent(new MouseEvent(map[type] || type, opts));
-    }
-  }
-  async function replaySignatureIntoModal(modal, token) {
-    requireToken(token);
-    if (!sigPadHasInk() || !dashSig.strokes.length) return false;
-
-    const sigCanvas = findModalSignatureCanvas(modal);
-    if (!sigCanvas) {
-      log("ℹ️ Signatur-Canvas im Modal nicht gefunden (#signature_canvas).");
-      return false;
-    }
-
-    try {
-      const ctx = sigCanvas.getContext("2d");
-      ctx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
-    } catch {}
-
-    try {
-      sigCanvas.scrollIntoView({ block: "center" });
-      sigCanvas.focus?.();
-      sigCanvas.click();
-    } catch {}
-
-    await cancellableSleep(150, token);
-
-    const rect = sigCanvas.getBoundingClientRect();
-
-    for (const stroke of dashSig.strokes) {
-      requireToken(token);
-      if (!stroke || stroke.length < 2) continue;
-
-      const p0 = stroke[0];
-      const x0 = rect.left + p0.x * rect.width;
-      const y0 = rect.top + p0.y * rect.height;
-
-      dispatchPointerLike(sigCanvas, "pointerdown", x0, y0);
-      await cancellableSleep(16, token);
-
-      for (let i = 1; i < stroke.length; i++) {
-        const p = stroke[i];
-        const x = rect.left + p.x * rect.width;
-        const y = rect.top + p.y * rect.height;
-        dispatchPointerLike(sigCanvas, "pointermove", x, y);
-        await cancellableSleep(10, token);
-      }
-
-      const plast = stroke[stroke.length - 1];
-      const xl = rect.left + plast.x * rect.width;
-      const yl = rect.top + plast.y * rect.height;
-      dispatchPointerLike(sigCanvas, "pointerup", xl, yl);
-      await cancellableSleep(40, token);
-    }
-
-    // extra draw fallback
-    try {
-      const ctx = sigCanvas.getContext("2d");
-      ctx.lineWidth = 2;
-      ctx.lineCap = "round";
-      ctx.strokeStyle = "#111";
-      for (const stroke of dashSig.strokes) {
-        if (!stroke || stroke.length < 2) continue;
-        ctx.beginPath();
-        ctx.moveTo(stroke[0].x * sigCanvas.width, stroke[0].y * sigCanvas.height);
-        for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * sigCanvas.width, stroke[i].y * sigCanvas.height);
-        ctx.stroke();
-      }
-    } catch {}
-
-    log("✍️ Signatur ins Modal übertragen.");
-    return true;
-  }
-
-  function findKorrekturBeendenButton(modal) {
-    const btns = Array.from(modal.querySelectorAll("button, a, input[type='button'], input[type='submit']"));
-    for (const el of btns) {
-      const t = (el.textContent || el.value || "").trim().toLowerCase();
-      if (t.includes("korrektur beenden")) return el;
-    }
-    for (const el of btns) {
-      const t = (el.textContent || el.value || "").trim().toLowerCase();
-      if (t.includes("korrektur") && t.includes("beenden")) return el;
-    }
-    for (const el of btns) {
-      const title = (el.getAttribute("title") || "").toLowerCase();
-      const da = (el.getAttribute("data-action") || "").toLowerCase();
-      if (title.includes("korrektur") || da.includes("korrektur")) return el;
-    }
-    return null;
-  }
-  async function clickKorrekturBeenden(modal, token) {
-    const btn = findKorrekturBeendenButton(modal);
-    if (!btn) {
-      log("ℹ️ Button 'Korrektur beenden' nicht gefunden (Selector).");
-      return false;
-    }
-    try {
-      btn.scrollIntoView({ block: "center" });
-    } catch {}
-    await cancellableSleep(100, token);
-    btn.click();
-    log("✅ 'Korrektur beenden' geklickt.");
-    return true;
-  }
-
-  /* ---------------- Driver (Select2 FIX) ---------------- */
-  function getSelect2Container() {
-    return $("#select2-staff_id-container") || $('span.select2-selection__rendered[id*="staff_id"]');
-  }
-  function getDriverSelect() {
-    return $("#staff_id") || $('select[name="staff_id"]') || $("#driverSelect") || $('select[name="driver"]') || $("select#driver") || $("select");
-  }
-  function getSelectedDriverName() {
-    const s2 = getSelect2Container();
-    if (s2 && (s2.textContent || "").trim()) return (s2.textContent || "").trim();
-    const sel = getDriverSelect();
-    if (!sel) return "";
-    const opt = sel.options[sel.selectedIndex];
-    return (opt?.textContent || opt?.innerText || "").trim();
-  }
-  async function selectDriverByNameSelect2UI(name, token) {
-    const container = $("#select2-staff_id-container");
-    const clickable = container?.closest(".select2")?.querySelector(".select2-selection") || container?.closest(".select2-selection") || container;
-    if (!clickable) return false;
-
-    clickable.click();
-    await cancellableSleep(250, token);
-
-    const input = $(".select2-container--open .select2-search__field");
-    if (!input) return false;
-
-    input.value = name;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await cancellableSleep(350, token);
-
-    const options = $$(".select2-container--open .select2-results__option[role='option']:not(.select2-results__message)");
-    if (!options.length) return false;
-
-    const target = normName(name);
-    const best = options.find((o) => normName(o.textContent || "") === target) || options[0];
-    best.scrollIntoView({ block: "center" });
-    best.click();
-    await cancellableSleep(350, token);
-    return true;
-  }
-  async function selectDriverByName(name, token) {
-    const sel = getDriverSelect();
-    const target = normName(name);
-
-    if (sel && sel.options && sel.options.length) {
-      for (let i = 0; i < sel.options.length; i++) {
-        const txt = (sel.options[i].textContent || "").trim();
-        if (normName(txt) === target) {
-          sel.selectedIndex = i;
-          try {
-            if (window.jQuery && jQuery(sel).data("select2")) jQuery(sel).val(sel.options[i].value).trigger("change");
-            else sel.dispatchEvent(new Event("change", { bubbles: true }));
-          } catch {
-            sel.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          await cancellableSleep(350, token);
-          return true;
-        }
-      }
-    }
-    return await selectDriverByNameSelect2UI(name, token);
-  }
-  async function waitForDriverApplied(name, token) {
-    const target = normName(name);
-    const t0 = Date.now();
-    while (Date.now() - t0 < 15000) {
-      requireToken(token);
-      const cur = normName(getSelectedDriverName());
-      if (cur === target) return true;
-      await cancellableSleep(250, token);
-    }
-    return false;
-  }
-
-  /* ---------------- Vehicle (Select2 FIX) ---------------- */
-  function getVehicleSelect() {
-    return $("#working_time_vehicle_id") || $('select[name="working_time_vehicle_id"]') || $("#vehicle_id") || $('select[name="vehicle_id"]');
-  }
-  function getVehicleSelect2Container() {
-    return $("#select2-working_time_vehicle_id-container") || $('span.select2-selection__rendered[id*="working_time_vehicle_id"]');
-  }
-  async function selectVehicleByTextSelect2UI(text, token) {
-    const container = getVehicleSelect2Container();
-    const clickable = container?.closest(".select2")?.querySelector(".select2-selection") || container?.closest(".select2-selection") || container;
-    if (!clickable) return false;
-
-    clickable.click();
-    await cancellableSleep(250, token);
-
-    const input = $(".select2-container--open .select2-search__field");
-    if (!input) return false;
-
-    input.value = text;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    await cancellableSleep(350, token);
-
-    const options = $$(".select2-container--open .select2-results__option[role='option']:not(.select2-results__message)");
-    if (!options.length) return false;
-
-    const target = normName(text);
-    const best =
-      options.find((o) => normName(o.textContent || "") === target) ||
-      options.find((o) => normName(o.textContent || "").includes(target)) ||
-      options[0];
-
-    best.scrollIntoView({ block: "center" });
-    best.click();
-    await cancellableSleep(350, token);
-    return true;
-  }
-  async function selectVehicleByText(_modal, text, token) {
-    const t = normName(text);
-    if (!t) return false;
-
-    const sel = getVehicleSelect();
-    if (sel && sel.options && sel.options.length) {
-      for (let i = 0; i < sel.options.length; i++) {
-        const label = (sel.options[i].textContent || "").trim();
-        if (normName(label).includes(t)) {
-          sel.selectedIndex = i;
-          try {
-            if (window.jQuery && jQuery(sel).data("select2")) jQuery(sel).val(sel.options[i].value).trigger("change");
-            else sel.dispatchEvent(new Event("change", { bubbles: true }));
-          } catch {
-            sel.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          await cancellableSleep(250, token);
-          return true;
-        }
-      }
-    }
-    return await selectVehicleByTextSelect2UI(text, token);
-  }
-  async function waitForVehicleApplied(expectedText, token) {
-    const target = normName(expectedText);
-    const t0 = Date.now();
-    while (Date.now() - t0 < 6000) {
-      requireToken(token);
-      const c = getVehicleSelect2Container();
-      const cur = normName((c?.textContent || "").trim());
-      if (cur && !cur.includes("bitte auswählen") && cur.includes(target)) return true;
-      await cancellableSleep(200, token);
-    }
-    return false;
-  }
-
-  /* ---------------- Profiles: per-driver, per-mode ---------------- */
-  function profileKey(driverName) {
-    return `${state.mode}::${normName(driverName)}`;
-  }
-  function parseKmInt(kmDot00) {
-    const s = String(kmDot00 || "").trim();
-    const m = s.match(/(\d+)/);
-    return m ? parseInt(m[1], 10) : 0;
-  }
-  function formatDashKmDot00(v) {
-    const n = parseKmInt(v);
-    if (!n) return "";
-    return `${n}.00`;
-  }
-  function persistProfileLastKm(kmDot00) {
-    const driver = state.currentDriverName || getSelectedDriverName();
-    const name = (driver || "").trim();
-    if (!name) return;
-    const profiles = loadProfiles();
-    const key = profileKey(name);
-    if (!profiles[key]) profiles[key] = { name, mode: state.mode, fahrzeug: "", lastKm: "", otMin: 7, otMax: 9, sig: null };
-    profiles[key].lastKm = kmDot00;
-    saveProfiles(profiles);
-  }
-  function setDashKmDot00FromInt(n) {
-    const input = $("#mt_km");
-    if (input) input.value = `${n}.00`;
-    persistProfileLastKm(`${n}.00`);
-  }
-  function getDashStartKmInt() {
-    return parseKmInt(formatDashKmDot00($("#mt_km")?.value || ""));
-  }
-  function getOtRangeFromDash() {
-    const minH = parseFloat(($("#mt_ot_min")?.value || "").replace(",", "."));
-    const maxH = parseFloat(($("#mt_ot_max")?.value || "").replace(",", "."));
-    const min = isFinite(minH) && minH >= 0 ? minH : 7;
-    const max = isFinite(maxH) && maxH >= min ? maxH : 9;
-    return { min, max };
-  }
-  function saveCurrentSetupToProfile() {
-    const driver = state.currentDriverName || getSelectedDriverName();
-    const name = (driver || "").trim();
-    if (!name) return false;
-    const fzg = ($("#mt_fzg")?.value || "").trim();
-    const km = formatDashKmDot00($("#mt_km")?.value || "");
-    if (!fzg || !parseKmInt(km)) return false;
-    if (!sigPadHasInk()) return false;
-
-    const profiles = loadProfiles();
-    const key = profileKey(name);
-    const ot = getOtRangeFromDash();
-    profiles[key] = { name, mode: state.mode, fahrzeug: fzg, lastKm: km, otMin: ot.min, otMax: ot.max, sig: { strokes: dashSig.strokes } };
-    saveProfiles(profiles);
-    return true;
-  }
-  function loadProfileToDashboard(name) {
-    const profiles = loadProfiles();
-    const prof = profiles[profileKey(name)];
-    if (!prof) return false;
-
-    const fzgEl = $("#mt_fzg");
-    const kmEl = $("#mt_km");
-    const otMinEl = $("#mt_ot_min");
-    const otMaxEl = $("#mt_ot_max");
-
-    if (fzgEl) fzgEl.value = prof.fahrzeug || "";
-    if (kmEl) kmEl.value = formatDashKmDot00(prof.lastKm || "");
-    if (otMinEl) otMinEl.value = String(prof.otMin ?? 7);
-    if (otMaxEl) otMaxEl.value = String(prof.otMax ?? 9);
-
-    if (prof.sig?.strokes?.length) {
-      dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
-      dashSig.cur = [];
-      dashSig.hasInk = true;
-
-      const c = $("#mt_sig_canvas");
-      if (c) {
-        const ctx = c.getContext("2d");
-        ctx.clearRect(0, 0, c.width, c.height);
-        ctx.lineWidth = 2;
-        ctx.lineCap = "round";
-        ctx.strokeStyle = "#111";
-        for (const stroke of dashSig.strokes) {
-          if (!stroke || stroke.length < 2) continue;
-          ctx.beginPath();
-          ctx.moveTo(stroke[0].x * c.width, stroke[0].y * c.height);
-          for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * c.width, stroke[i].y * c.height);
-          ctx.stroke();
-        }
-        $("#mt_sig_status").textContent = "Signatur: OK";
-      }
-    }
-    return true;
-  }
-  function isDashboardReady() {
-    const fzg = ($("#mt_fzg")?.value || "").trim();
-    const km = parseKmInt(formatDashKmDot00($("#mt_km")?.value || ""));
-    return !!(fzg && km && sigPadHasInk());
-  }
-  async function waitForReady(driverName, token) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < 5000) {
-      requireToken(token);
-      if (isDashboardReady()) {
-        setReady(true);
-        return true;
-      }
-      if (driverName) loadProfileToDashboard(driverName);
-      await cancellableSleep(200, token);
-    }
-    setReady(isDashboardReady());
-    return state.ready;
-  }
-
-  /* ---------------- Injected UI (KEEP ALL FORMS) ---------------- */
-  function injectUI() {
-    if ($("#mt_card")) return;
-
-    const css = `
-      :root{ --mt-accent:${MODES[state.mode].accent}; --mt-bg:${MODES[state.mode].bg}; --mt-border:${MODES[state.mode].border}; --mt-muted:${MODES[state.mode].muted}; --mt-primary:${MODES[state.mode].primary}; }
-      .mt-card{ position:fixed; top:14px; right:14px; width:360px; max-height:92vh; overflow:auto; z-index:999999; background:var(--mt-bg); color:#fff; border:1px solid var(--mt-border); border-radius:14px; box-shadow:0 10px 30px rgba(0,0,0,.35); font-family:Segoe UI,Arial; }
-      .mt-inner{ padding:12px; }
-      .mt-title{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
-      .mt-badge{ padding:2px 8px; border-radius:999px; background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.12); font-size:12px; }
-      .mt-btn{ flex:1; padding:10px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.14); background:rgba(255,255,255,.06); color:#fff; cursor:pointer; font-weight:700; }
-      .mt-btn:hover{ background:rgba(255,255,255,.10); }
-      .mt-btn.primary{ background:var(--mt-primary); border-color:rgba(255,255,255,.18); }
-      .mt-btn.muted{ background:rgba(255,255,255,.05); }
-      .mt-btn.danger{ background:#b00020; }
-      .mt-row{ display:flex; gap:10px; align-items:center; }
-      .mt-field{ display:flex; flex-direction:column; gap:4px; margin:6px 0; }
-      .mt-field label{ font-size:12px; opacity:.88; }
-      .mt-field input,.mt-field textarea,.mt-field select{ width:100%; padding:9px 10px; border-radius:10px; border:1px solid rgba(255,255,255,.12); background:rgba(255,255,255,.05); color:#fff; outline:none; }
-      .mt-field textarea{ resize:vertical; }
-      .mt-sigbox{ border:1px dashed rgba(255,255,255,.18); border-radius:12px; padding:10px; margin:8px 0; background:rgba(255,255,255,.04); }
-      .mt-sigrow{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px; }
-      .mt-sigstatus{ font-size:12px; opacity:.9; }
-      .mt-canvas{ width:100%; height:110px; background:#fff; border-radius:10px; touch-action:none; }
-      .mt-log{ white-space:pre-wrap; font-family:Consolas, monospace; font-size:12px; background:rgba(0,0,0,.2); border:1px solid rgba(255,255,255,.08); border-radius:12px; padding:10px; margin-top:10px; min-height:90px; }
-      .mt-sign{ font-size:11px; opacity:.75; text-align:center; margin-top:8px; }
-      .mt-hidden{ display:none !important; }
-      .mt-toggle{ position:fixed; top:14px; right:14px; z-index:999999; border:none; background:transparent; cursor:pointer; padding:0; }
-      .mt-toggle svg{ width:54px; height:54px; filter: drop-shadow(0 8px 18px rgba(0,0,0,.35)); }
-    `;
-    const style = document.createElement("style");
-    style.textContent = css;
-    document.head.appendChild(style);
-
-    const wrap = document.createElement("div");
-    wrap.className = "mt-card";
-    wrap.id = "mt_card";
-    wrap.innerHTML = `
-      <div class="mt-inner">
+  const wrap=document.createElement('div');
+  wrap.className='mt-wrap';
+  wrap.innerHTML=`
+    <div class="mt-card" id="mt_card">
+      <div class="mt-header">
         <div class="mt-title">
-          <div style="display:flex;align-items:center;gap:8px;">
-            <div style="font-weight:900;font-size:16px;">AutoSuite</div>
-            <div class="mt-badge" id="mt_mode_badge">${MODES[state.mode].label}</div>
-          </div>
-          <div class="mt-row" style="gap:6px;">
-            <button class="mt-btn muted" id="mt_minimize">_</button>
-          </div>
+          <span class="mt-pill" id="mt_badge">${state.mode}</span>
+          <span id="mt_title">AutoSuite MASTER — ${state.mode}</span>
         </div>
-
-        <div class="mt-field" style="margin-top:8px;">
-          <label>MODE</label>
-          <select id="mt_mode">
-            <option value="UPS">UPS</option>
-            <option value="DPD">DPD</option>
-            <option value="GLS">GLS</option>
-          </select>
-        </div>
-
-        <div style="font-weight:900;margin:10px 0 6px;">Setup (Fahrzeug + Start-KM + Signatur)</div>
-        <div class="mt-field"><label>Fahrzeug / Vozilo</label><input id="mt_fzg" type="text"></div>
-        <div class="mt-field"><label>Start-KM / Početni KM</label><input id="mt_km" type="text" placeholder="z.B. 215000.00"></div>
-
-        <div class="mt-row" style="gap:8px;margin-top:6px;">
-          <div class="mt-field" style="flex:1;">
-            <label>Überstunden Ziel (Monat) — MIN (h, netto)</label>
-            <input id="mt_ot_min" type="number" min="0" step="0.5" value="7">
-          </div>
-          <div class="mt-field" style="flex:1;">
-            <label>Überstunden Ziel (Monat) — MAX (h, netto)</label>
-            <input id="mt_ot_max" type="number" min="0" step="0.5" value="9">
-          </div>
-        </div>
-
-        <div class="mt-sigbox">
-          <div class="mt-sigrow">
-            <div class="mt-sigstatus" id="mt_sig_status">Signatur: leer</div>
-            <button class="mt-btn danger" id="mt_sig_clear">Clear</button>
-          </div>
-          <canvas id="mt_sig_canvas" class="mt-canvas" width="800" height="240"></canvas>
-          <div style="margin-top:6px;opacity:.9;">➡️ Zeichne hier die Signatur für den aktuellen Fahrer.</div>
-        </div>
-
-        <div class="mt-row">
-          <button class="mt-btn primary" id="mt_ready_btn">ALLES BEREIT</button>
-          <button class="mt-btn muted" id="mt_stop">Stop / Zaustavi</button>
-        </div>
-
-        <hr style="border:0;border-top:1px solid rgba(255,255,255,.12);margin:10px 0">
-
-        <div style="font-weight:900;margin-bottom:6px;">Single Driver (aktueller Fahrer im Dropdown)</div>
-        <div class="mt-row">
-          <button class="mt-btn primary" id="mt_start_auto">Auto Start (1 Fahrer)</button>
-        </div>
-
-        <div style="font-weight:900;margin:10px 0 6px;">Nur 1 Tag bearbeiten (Modal muss offen sein)</div>
-        <div class="mt-row">
-          <button class="mt-btn primary" id="mt_one_day">Nur 1 Tag</button>
-        </div>
-
-        <div style="font-weight:900;margin:10px 0 6px;">Duplikate Pausen (SO/RP)</div>
-        <div class="mt-row">
-          <button class="mt-btn primary" id="mt_clean_one_open">Duplikate (1 Tag, Modal offen)</button>
-          <button class="mt-btn primary" id="mt_clean_page">Duplikate (Fahrer, diese Seite)</button>
-          <button class="mt-btn primary" id="mt_clean_driver">Duplikate (ganzer Fahrer)</button>
-        </div>
-
-        <div style="font-weight:900;margin:10px 0 6px;">Multi Driver (Liste unten)</div>
-        <div class="mt-field">
-          <label>Fahrer-Liste (eine Zeile pro Fahrer)</label>
-          <textarea id="mt_driver_list" rows="6" placeholder="z.B.&#10;Aleksandar Ichkov&#10;David Györi&#10;..."></textarea>
-        </div>
-        <div class="mt-row">
-          <button class="mt-btn primary" id="mt_multi_start">Start Multi</button>
-        </div>
-
-        <div class="mt-log" id="mt_log"></div>
-        <div class="mt-sign">Entwickelt von ICHKOV</div>
+        <button class="mt-minbtn" id="mt_minimize">Minimieren</button>
       </div>
-    `;
-    document.body.appendChild(wrap);
 
-    const toggle = document.createElement("button");
-    toggle.className = "mt-toggle";
-    toggle.id = "mt_toggle_btn";
-    toggle.innerHTML = `
-      <svg viewBox="0 0 64 64" aria-label="AutoSuite">
-        <rect x="2" y="2" width="60" height="60" rx="12" fill="var(--mt-bg)"></rect>
-        <path fill="var(--mt-accent)" d="M32 10c6 4 12 6 20 6v16c0 14-11 22-20 24-9-2-20-10-20-24V16c8 0 14-2 20-6z"/>
-        <text id="mt_icon_text" x="32" y="38" text-anchor="middle" font-size="16" font-family="Segoe UI, Arial" fill="var(--mt-bg)" font-weight="900">${state.mode}</text>
-      </svg>
-    `;
-    document.body.appendChild(toggle);
+      <div class="mt-field">
+        <label>Modus</label>
+        <select id="mt_mode">
+          <option value="UPS">UPS</option>
+          <option value="DPD">DPD</option>
+          <option value="GLS">GLS</option>
+        </select>
+      </div>
 
-    function applyMinimizedUI(min) {
-      const card = $("#mt_card"),
-        tbtn = $("#mt_toggle_btn");
-      if (min) {
-        card.classList.add("mt-hidden");
-        tbtn.classList.remove("mt-hidden");
-      } else {
-        card.classList.remove("mt-hidden");
-        tbtn.classList.add("mt-hidden");
-      }
-      GM_SetValueSafe(KEYS.uiMin, !!min);
-    }
-    $("#mt_minimize").addEventListener("click", () => applyMinimizedUI(true));
-    $("#mt_toggle_btn").addEventListener("click", () => applyMinimizedUI(false));
+      <div style="font-weight:900;margin:10px 0 6px;">Setup (Fahrzeug + Start-KM + Signatur)</div>
+      <div class="mt-field"><label>Fahrzeug / Vozilo</label><input id="mt_fzg" type="text"></div>
+      <div class="mt-field"><label>Start-KM / Početni KM</label><input id="mt_km" type="text" placeholder="z.B. 215000.00"></div>
 
-    const modeSel = $("#mt_mode");
-    modeSel.value = state.mode;
-    modeSel.addEventListener("change", () => {
-      const v = modeSel.value;
-      if (!MODES[v]) return;
-      state.mode = v;
-      GM_SetValueSafe(KEYS.mode, v);
-      document.documentElement.style.setProperty("--mt-accent", MODES[v].accent);
-      document.documentElement.style.setProperty("--mt-bg", MODES[v].bg);
-      document.documentElement.style.setProperty("--mt-border", MODES[v].border);
-      document.documentElement.style.setProperty("--mt-muted", MODES[v].muted);
-      document.documentElement.style.setProperty("--mt-primary", MODES[v].primary);
-      $("#mt_mode_badge").textContent = MODES[v].label;
-      const t = $("#mt_icon_text");
-      if (t) t.textContent = MODES[v].iconText;
-      const drv = state.currentDriverName || getSelectedDriverName();
-      if (drv) loadProfileToDashboard(drv);
-      log(`MODE geändert: ${v}`);
-    });
+      <div style="font-weight:900;margin:10px 0 6px;">Überstunden Ziel (Monat)</div>
+      <div class="mt-row">
+        <div class="mt-field" style="flex:1;min-width:140px"><label>Von (Std)</label><input id="mt_ot_min" type="number" step="0.5" min="0" placeholder="z.B. 5"></div>
+        <div class="mt-field" style="flex:1;min-width:140px"><label>Bis (Std)</label><input id="mt_ot_max" type="number" step="0.5" min="0" placeholder="z.B. 8"></div>
+      </div>
 
-    initSigPad();
-    wireButtons();
+      <div class="mt-sigbox">
+        <div class="mt-sigrow">
+          <div class="mt-sigstatus" id="mt_sig_status">Signatur: leer</div>
+          <button class="mt-btn danger" id="mt_sig_clear">Clear</button>
+        </div>
+        <canvas id="mt_sig_canvas" class="mt-canvas" width="800" height="240"></canvas>
+        <div style="margin-top:6px;opacity:.9;">➡️ Zeichne hier die Signatur für den aktuellen Fahrer.</div>
+      </div>
 
-    const isMin = !!GM_GetValueSafe(KEYS.uiMin, false);
-    applyMinimizedUI(isMin);
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_ready_btn">ALLES BEREIT</button>
+        <button class="mt-btn muted"   id="mt_stop">Stop / Zaustavi</button>
+      </div>
+
+      <hr style="border:0;border-top:1px solid rgba(255,255,255,.12);margin:10px 0">
+
+      <div style="font-weight:900;margin-bottom:6px;">Single Driver (aktueller Fahrer im Dropdown)</div>
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_start_auto">Auto Start (1 Fahrer)</button>
+      </div>
+
+      <div style="font-weight:900;margin:10px 0 6px;">Nur 1 Tag bearbeiten (Modal muss offen sein)</div>
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_one_day">Nur 1 Tag</button>
+      </div>
+
+      <div style="font-weight:900;margin:10px 0 6px;">Duplikate Pausen (SO/RP)</div>
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_clean_one_open">Duplikate (1 Tag, Modal offen)</button>
+        <button class="mt-btn primary" id="mt_clean_page">Duplikate (Fahrer, diese Seite)</button>
+        <button class="mt-btn primary" id="mt_clean_driver">Duplikate (ganzer Fahrer)</button>
+      </div>
+
+      <div style="font-weight:900;margin:10px 0 6px;">Multi Driver (Liste unten)</div>
+      <div class="mt-field">
+        <label>Fahrer-Liste (eine Zeile pro Fahrer)</label>
+        <textarea id="mt_driver_list" rows="6" placeholder="z.B.&#10;Aleksandar Ichkov&#10;David Györi&#10;..."></textarea>
+      </div>
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_multi_start">Start Multi</button>
+      </div>
+
+      <div class="mt-log" id="mt_log"></div>
+      <div class="mt-sign">Entwickelt von ICHKOV</div>
+    </div>
+  `;
+  document.body.appendChild(wrap);
+
+  // Toggle icon
+  const toggle=document.createElement('button');
+  toggle.className='mt-toggle';
+  toggle.id='mt_toggle_btn';
+  toggle.innerHTML=`
+    <svg viewBox="0 0 64 64" aria-label="AutoSuite">
+      <rect x="2" y="2" width="60" height="60" rx="12" fill="var(--mt-bg)"></rect>
+      <path fill="var(--mt-accent)" d="M32 10c6 4 12 6 20 6v16c0 14-11 22-20 24-9-2-20-10-20-24V16c8 0 14-2 20-6z"/>
+      <text id="mt_icon_text" x="32" y="38" text-anchor="middle" font-size="16" font-family="Segoe UI, Arial" fill="var(--mt-bg)" font-weight="900">${state.mode}</text>
+    </svg>
+  `;
+  document.body.appendChild(toggle);
+
+  function applyMinimizedUI(min){
+    const card=$('#mt_card'); const tbtn=$('#mt_toggle_btn');
+    if(min){ card.classList.add('mt-hidden'); tbtn.classList.remove('mt-hidden'); }
+    else { card.classList.remove('mt-hidden'); tbtn.classList.add('mt-hidden'); }
+    GM_SetValueSafe(KEYS.uiMin, !!min);
   }
 
-  /* ---------------- TABLE + DATE detection ---------------- */
-  function getRowDate(tr) {
-    const td = tr.querySelector("td.sorting_1");
-    const s1 = (td?.textContent || "").trim();
-    if (DATE_RE.test(s1)) return s1;
-    const txt = (tr.innerText || "").replace(/\s+/g, " ");
-    const m = txt.match(DATE_RE);
-    return m ? m[0] : "";
+  $('#mt_minimize').addEventListener('click',()=>applyMinimizedUI(true));
+  $('#mt_toggle_btn').addEventListener('click',()=>applyMinimizedUI(false));
+
+  // IMPORTANT: default is NOT minimized
+  applyMinimizedUI(!!GM_GetValueSafe(KEYS.uiMin,false));
+
+  // Wire mode switch
+  $('#mt_mode').addEventListener('change',()=>{
+    state.mode = $('#mt_mode').value;
+    $('#mt_badge').textContent = state.mode;
+    GM_SetValueSafe(KEYS.mode, state.mode);
+    applyTheme();
+    // reset ready when mode changes
+    setReady(false);
+    log(`🔁 Modus gewechselt: ${state.mode}`);
+  });
+
+  setupDashSignaturePad();
+  applyTheme();
+
+  // Buttons
+  wireButtons();
+}
+
+/* ---------------- Signature replay into modal ---------------- */
+function dispatchMouse(el, type, x, y){
+  const w = (el && el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : undefined;
+  const ev = new MouseEvent(type, {bubbles:true,cancelable:true,view:w,clientX:x,clientY:y,buttons:(type==='mouseup')?0:1});
+  el.dispatchEvent(ev);
+}
+function findSignatureCanvas(modal){
+  return modal.querySelector('#signature_canvas')
+      || modal.querySelector('#signature canvas')
+      || modal.querySelector('.kbw-signature canvas');
+}
+async function replaySignature(modal, driverName, token){
+  const profiles=loadProfiles();
+  const prof=profiles[profileKey(driverName)];
+  const sig=prof?.sig;
+  if(!sig?.strokes || !sig.strokes.length){ log(`❌ Keine Signatur gespeichert für: ${driverName}`); throw ABORT; }
+  const canvas=findSignatureCanvas(modal);
+  if(!canvas){ log('⚠️ signature_canvas nicht gefunden'); throw ABORT; }
+  canvas.scrollIntoView({block:'center'});
+  await cancellableSleep(150, token);
+  const r=canvas.getBoundingClientRect();
+  for(const stroke of sig.strokes){ if(!stroke || stroke.length<2) continue;
+    const p0=stroke[0];
+    dispatchMouse(canvas,'mousedown', r.left+p0.x*r.width, r.top+p0.y*r.height);
+    await cancellableSleep(10, token);
+    for(let i=1;i<stroke.length;i++){ const pt=stroke[i]; dispatchMouse(canvas,'mousemove', r.left+pt.x*r.width, r.top+pt.y*r.height); await cancellableSleep(6, token); }
+    const plast=stroke[stroke.length-1];
+    dispatchMouse(canvas,'mouseup', r.left+plast.x*r.width, r.top+plast.y*r.height);
+    await cancellableSleep(40, token);
   }
-  function findTimeTable() {
-    const dateCells = $$("td.sorting_1").filter((td) => DATE_RE.test((td.textContent || "").trim()));
-    if (dateCells.length) {
-      const tbl = dateCells[0].closest("table");
-      if (tbl) return tbl;
-    }
-    const tables = $$("table");
-    let best = null,
-      bestScore = 0;
-    for (const t of tables) {
-      const score = $$("tbody tr", t).filter((tr) => DATE_RE.test(tr.innerText || "")).length;
-      if (score > bestScore) {
-        bestScore = score;
-        best = t;
-      }
-    }
-    return bestScore > 0 ? best : null;
-  }
-  function findEditButton(tr) {
-    const candidates = Array.from(tr.querySelectorAll("a,button"));
-    for (const el of candidates) {
-      const t = (el.textContent || "").trim().toLowerCase();
-      const title = (el.getAttribute("title") || "").toLowerCase();
-      const href = (el.getAttribute("href") || "").toLowerCase();
-      const dt = (el.getAttribute("data-target") || "").toLowerCase();
-      const toggle = (el.getAttribute("data-toggle") || "").toLowerCase();
-      const hasPencil = !!el.querySelector?.("i.fa-pencil, i.fa-pencil-alt, i.fas.fa-pencil-alt, i.fa-edit");
-      const ok =
-        hasPencil ||
-        toggle.includes("modal") ||
-        dt.includes("modal") ||
-        title.includes("bearbeit") ||
-        title.includes("edit") ||
-        t.includes("bearbeit") ||
-        t.includes("details") ||
-        href.includes("edit") ||
-        href.includes("bearbeit") ||
-        href.includes("detail");
-      if (ok) return el;
-    }
-    return candidates[0] || null;
-  }
+  const sigDiv = modal.querySelector('#signature.kbw-signature, .kbw-signature');
+  if(sigDiv){ sigDiv.dispatchEvent(new Event('change',{bubbles:true})); sigDiv.dispatchEvent(new Event('input',{bubbles:true})); }
+  await cancellableSleep(150, token);
+  log('✅ Signatur replayed');
+}
 
-  /* ---------------- Modal helpers ---------------- */
-  function q(modal, sel) {
-    return modal.querySelector(sel);
-  }
+/* ---------------- Plan generators (mode-specific) ---------------- */
+function genPlanUPS(dateStr){
+  const d=deDateStrToDate(dateStr);
+  const wd=d.getDay(); // Sun=0..Sat=6
+  if (wd===0 || wd===6) return null;
 
-  // ✅ FIX: Flatpickr TIME UI setter: open -> setDate(Date) -> set hour/min inputs -> events -> close
-  function setVal(el, val) {
-    if (!el) return false;
+  const START_MIN = timeStrToMins('06:40'), START_MAX = timeStrToMins('07:10');
 
-    try {
-      el.removeAttribute("readonly");
-    } catch {}
+  let END_MIN   = timeStrToMins('15:10');
+  let END_MAX   = timeStrToMins('15:45');
+  let DUR_MIN   = 510;  // 8:30
+  let DUR_MAX   = 540;  // 9:00
 
-    const isFlatpickr = el.classList && el.classList.contains("flatpickr-input") && el._flatpickr;
-    if (isFlatpickr) {
-      const fp = el._flatpickr;
-
-      const m = String(val || "").match(/(\d{1,2}):(\d{2})/);
-      if (m) {
-        let hh = Math.max(0, Math.min(23, parseInt(m[1], 10)));
-        let mm = Math.max(0, Math.min(59, parseInt(m[2], 10)));
-
-        const step = fp?.config?.minuteIncrement ? fp.config.minuteIncrement : 5; // you have step=5
-        mm = Math.round(mm / step) * step;
-        if (mm === 60) {
-          mm = 0;
-          hh = (hh + 1) % 24;
-        }
-
-        try {
-          fp.open();
-        } catch {}
-
-        try {
-          const base = fp.selectedDates && fp.selectedDates[0] ? new Date(fp.selectedDates[0]) : new Date();
-          base.setHours(hh, mm, 0, 0);
-
-          // 1) main
-          fp.setDate(base, true);
-
-          // 2) internal time inputs
-          const hourInput = fp.timeContainer?.querySelector("input.flatpickr-hour");
-          const minInput = fp.timeContainer?.querySelector("input.flatpickr-minute");
-
-          if (hourInput) {
-            hourInput.value = String(hh).padStart(2, "0");
-            hourInput.dispatchEvent(new Event("input", { bubbles: true }));
-            hourInput.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          if (minInput) {
-            minInput.value = String(mm).padStart(2, "0");
-            minInput.dispatchEvent(new Event("input", { bubbles: true }));
-            minInput.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-
-          // 3) visible input + events
-          el.value = String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
-          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-          try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-          try { el.dispatchEvent(new Event("blur", { bubbles: true })); } catch {}
-
-          try {
-            fp.close();
-          } catch {}
-          return true;
-        } catch {
-          try { el.value = val; } catch {}
-          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-          try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-          try { fp.close(); } catch {}
-          return true;
-        }
-      }
-
-      // not time format
-      try { fp.open(); } catch {}
-      try { fp.setDate(val, true); } catch {}
-      try { fp.close(); } catch {}
-      try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-      return true;
-    }
-
-    // normal input
-    const proto = Object.getPrototypeOf(el);
-    const desc = Object.getOwnPropertyDescriptor(proto, "value");
-    const setter = desc && desc.set ? desc.set : null;
-
-    try { el.focus(); } catch {}
-    try { if (setter) setter.call(el, val); else el.value = val; } catch { el.value = val; }
-    try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
-    try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
-    try { el.dispatchEvent(new Event("blur", { bubbles: true })); } catch {}
-    return true;
+  if (wd===2 || wd===3) {             // Tue/Wed
+    DUR_MIN = 540;                    // 9:00
+    DUR_MAX = 555;                    // 9:15
+    END_MAX = timeStrToMins('16:15'); // cap at 16:15
   }
 
-  async function waitForModal(token) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < DELAYS.modal) {
-      requireToken(token);
-      const m = $(".modal.show, .modal.in, .modal.fade.show") || $(".modal-dialog")?.closest(".modal");
-      if (m) return m;
-      await cancellableSleep(120, token);
-    }
-    return null;
+  const start = randInt(START_MIN, START_MAX);
+
+  let wantMin = Math.max(END_MIN, start + DUR_MIN);
+  let wantMax = Math.min(END_MAX, start + DUR_MAX);
+  if (wantMin > wantMax) {
+    wantMin = Math.max(END_MIN, start + DUR_MIN);
+    wantMax = Math.max(wantMin, Math.min(END_MAX, start + DUR_MAX));
   }
-  async function waitForModalClosed(token) {
-    const t0 = Date.now();
-    while (Date.now() - t0 < DELAYS.modalClose) {
-      requireToken(token);
-      const m = $(".modal.show, .modal.in, .modal.fade.show");
-      if (!m) return true;
-      await cancellableSleep(120, token);
-    }
-    return false;
-  }
+  const end = randInt(wantMin, wantMax);
 
-  /* ---------------- Overtime + RP rule helpers ---------------- */
-  function calcNetMinsFromPlan(plan) {
-    const ruDur = plan?.ru?.end != null && plan?.ru?.start != null ? plan.ru.end - plan.ru.start : 0;
-    return plan.end - plan.start - ruDur;
-  }
-  // RULE: if (end-start) >= 9h => RP must be 45–50 min
-  function pickRuDurByRule(durMins, baseMin, baseMax) {
-    if (durMins >= 540) return randInt(45, 50);
-    return randInt(baseMin, baseMax);
-  }
+  const so1 = { start, end: start + randInt(15,20) };
+  const so2 = { start: so1.end + randInt(5,10) };
+  so2.end   = so2.start + randInt(115,130);
 
-  /* ---------------- Mode-specific constraints for overtime adjustment ---------------- */
-  function getEndConstraintsByMode(dateStr, startMins) {
-    const d = deDateStrToDate(dateStr);
-    const wd = d.getDay();
+  const ruDur   = randInt(32,36);
+  const rpStart = randInt(timeStrToMins('10:00'), timeStrToMins('12:00') - ruDur);
+  const ru      = { start: rpStart, end: rpStart + ruDur };
 
-    if (state.mode === "UPS") {
-      let END_MIN = timeStrToMins("15:10");
-      let END_MAX = timeStrToMins("15:45");
-      let DUR_MIN = 510,
-        DUR_MAX = 540;
-      if (wd === 2 || wd === 3) {
-        DUR_MIN = 540;
-        DUR_MAX = 555;
-        END_MAX = timeStrToMins("16:15");
-      }
-      return { endMin: END_MIN, endMax: END_MAX, durMin: DUR_MIN, durMax: DUR_MAX, locked: false };
-    }
-    if (state.mode === "GLS") {
-      return { endMin: timeStrToMins("15:10"), endMax: timeStrToMins("15:45"), durMin: 510, durMax: 540, locked: false };
-    }
+  const so3 = { start: end - randInt(15,20), end };
+  const lenk = { start: so2.end, end };
 
-    // DPD
-    const MON_THU_FRI_MIN = 480,
-      MON_THU_FRI_MAX = 510;
-    const WED_MIN = 480,
-      WED_MAX = 510;
-    const TUE_MIN = 525,
-      TUE_MAX = 540;
-
-    if (wd === 1) return { endMin: timeStrToMins("14:25"), endMax: timeStrToMins("14:35"), durMin: MON_THU_FRI_MIN, durMax: MON_THU_FRI_MAX, locked: false };
-    if (wd === 2) return { endMin: startMins + TUE_MIN, endMax: startMins + TUE_MAX, durMin: TUE_MIN, durMax: TUE_MAX, locked: false };
-    if (wd === 3) return { endMin: startMins + WED_MIN, endMax: startMins + WED_MAX, durMin: WED_MIN, durMax: WED_MAX, locked: false };
-    if (wd === 4 || wd === 5) return { endMin: timeStrToMins("13:55"), endMax: timeStrToMins("14:10"), durMin: MON_THU_FRI_MIN, durMax: MON_THU_FRI_MAX, locked: false };
-    return { endMin: 0, endMax: 0, durMin: 0, durMax: 0, locked: true };
-  }
-
-  function rebuildPlanAfterEndChange(plan) {
-    const start = plan.start,
-      end = plan.end;
-    const dur = end - start;
-
-    if (state.mode === "UPS") {
-      const ruDur = pickRuDurByRule(dur, 32, 36);
-      const rpWinStart = timeStrToMins("10:00"),
-        rpWinEnd = timeStrToMins("12:00");
-      const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-      plan.ru = { start: rpStart, end: rpStart + ruDur };
-    } else if (state.mode === "GLS") {
-      const ruDur = pickRuDurByRule(dur, 32, 36);
-      const rpWinStart = timeStrToMins("09:00"),
-        rpWinEnd = timeStrToMins("10:30");
-      const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-      plan.ru = { start: rpStart, end: rpStart + ruDur };
-    } else {
-      const ruDur = pickRuDurByRule(dur, 31, 37);
-      const rpWinStart = timeStrToMins("10:50"),
-        rpWinEnd = timeStrToMins("11:50");
-      const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-      plan.ru = { start: rpStart, end: rpStart + ruDur };
-    }
-
-    plan.so3 = { start: end - randInt(15, 20), end };
-    plan.lenk.end = end;
-    return plan;
-  }
-
-  /* ---------------- Month overtime planner (NET + 40h/week base) ---------------- */
-  function initMonthPlansFromTable(table) {
-    const rows = Array.from(table.querySelectorAll("tbody tr")).filter((r) => {
-      const td = r.querySelector("td.sorting_1");
-      return td && DATE_RE.test((td.textContent || "").trim());
-    });
-
-    const dates = [];
-    for (const tr of rows) {
-      const dateStr = getRowDate(tr);
-      if (!dateStr) continue;
-      const d = deDateStrToDate(dateStr);
-      const wd = d.getDay();
-      if (wd === 0 || wd === 6) continue;
-      dates.push(dateStr);
-    }
-    if (!dates.length) return null;
-
-    const weekdayCount = dates.length;
-    const baseNet = weekdayCount * 8 * 60;
-
-    const ot = getOtRangeFromDash();
-    const overtimeTarget = randInt(Math.round(ot.min * 60), Math.round(ot.max * 60));
-    const targetNet = baseNet + overtimeTarget;
-
-    const plans = {};
-    let currentNet = 0;
-    for (const dateStr of dates) {
-      const p = genPlanByMode(dateStr);
-      if (!p) continue;
-      plans[dateStr] = p;
-      currentNet += calcNetMinsFromPlan(p);
-    }
-
-    let delta = targetNet - currentNet;
-    const shuffled = dates.slice().sort(() => Math.random() - 0.5);
-
-    for (let pass = 0; pass < 6 && Math.abs(delta) > 8; pass++) {
-      for (const dateStr of shuffled) {
-        if (Math.abs(delta) <= 8) break;
-        const plan = plans[dateStr];
-        if (!plan) continue;
-
-        const cons = getEndConstraintsByMode(dateStr, plan.start);
-        if (cons.locked) continue;
-
-        const step = Math.min(20, Math.max(5, Math.abs(delta)));
-        const direction = delta > 0 ? +1 : -1;
-        let desiredEnd = plan.end + direction * step;
-
-        const minEnd = Math.max(cons.endMin, plan.start + cons.durMin);
-        const maxEnd = Math.min(cons.endMax, plan.start + cons.durMax);
-        desiredEnd = Math.min(Math.max(desiredEnd, minEnd), maxEnd);
-
-        if (desiredEnd === plan.end) continue;
-
-        const oldNet = calcNetMinsFromPlan(plan);
-        plan.end = desiredEnd;
-        rebuildPlanAfterEndChange(plan);
-        const newNet = calcNetMinsFromPlan(plan);
-
-        const gain = newNet - oldNet;
-        if (gain === 0) continue;
-        delta -= gain;
-      }
-    }
-
-    return { plans, baseNet, overtimeTarget, targetNet };
-  }
-
-  /* ---------------- Plan generators (RP 9h rule included) ---------------- */
-  function genPlanUPS(dateStr) {
-    const d = deDateStrToDate(dateStr);
-    const wd = d.getDay();
-    if (wd === 0 || wd === 6) return null;
-
-    const START_MIN = timeStrToMins("06:40"),
-      START_MAX = timeStrToMins("07:10");
-
-    let END_MIN = timeStrToMins("15:10");
-    let END_MAX = timeStrToMins("15:45");
-    let DUR_MIN = 510,
-      DUR_MAX = 540;
-
-    if (wd === 2 || wd === 3) {
-      DUR_MIN = 540;
-      DUR_MAX = 555;
-      END_MAX = timeStrToMins("16:15");
-    }
-
-    const start = randInt(START_MIN, START_MAX);
-
-    let wantMin = Math.max(END_MIN, start + DUR_MIN);
-    let wantMax = Math.min(END_MAX, start + DUR_MAX);
-    if (wantMin > wantMax) {
-      wantMin = Math.max(END_MIN, start + DUR_MIN);
-      wantMax = Math.max(wantMin, Math.min(END_MAX, start + DUR_MAX));
-    }
-    let end = randInt(wantMin, wantMax);
-
+  const dur = end - start;
+  if (dur < DUR_MIN || dur > DUR_MAX) {
     const adjMin = Math.max(END_MIN, start + DUR_MIN);
     const adjMax = Math.min(END_MAX, start + DUR_MAX);
-    end = Math.min(Math.max(end, adjMin), adjMax);
+    const adjEnd = Math.min(Math.max(end, adjMin), adjMax);
+    so3.end = adjEnd;
+    so3.start = adjEnd - randInt(15,20);
+    lenk.end = adjEnd;
+    return { start, end: adjEnd, so1, so2, ru, so3, lenk };
+  }
+  return { start, end, so1, so2, ru, so3, lenk };
+}
 
-    const so1 = { start, end: start + randInt(15, 20) };
-    const so2 = { start: so1.end + randInt(5, 10) };
-    so2.end = so2.start + randInt(115, 130);
+function genPlanDPD(dateStr){
+  const d  = deDateStrToDate(dateStr);
+  const wd = d.getDay(); // 1=Mon, 2=Tue, 3=Wed, 4=Thu, 5=Fri
 
+  // Weekday start/end windows (original)
+  let sMin, sMax, eMin, eMax;
+  if (wd === 1) { // Monday
+    sMin=timeStrToMins('05:55'); sMax=timeStrToMins('06:05');
+    eMin=timeStrToMins('14:25'); eMax=timeStrToMins('14:35');
+  } else if (wd === 2) { // Tuesday (end window not used; we enforce 8:45–9:00 after start)
+    sMin=timeStrToMins('05:25'); sMax=timeStrToMins('05:40');
+    eMin=timeStrToMins('14:55'); eMax=timeStrToMins('15:10'); // legacy, unused for end
+  } else if (wd === 3) { // Wednesday (STRICT 8:00..8:30)
+    sMin=timeStrToMins('05:25'); sMax=timeStrToMins('05:40');
+    eMin=timeStrToMins('14:55'); eMax=timeStrToMins('15:10'); // legacy, unused for end
+  } else { // Thu/Fri
+    sMin=timeStrToMins('05:25'); sMax=timeStrToMins('05:40');
+    eMin=timeStrToMins('13:55'); eMax=timeStrToMins('14:10');
+  }
+
+  const start = randInt(sMin, sMax);
+
+  // Duration caps
+  const MON_THU_FRI_MIN = 480, MON_THU_FRI_MAX = 510; // 8:00..8:30
+  const WED_MIN = 480, WED_MAX = 510;                 // 8:00..8:30
+  const TUE_MIN = 525, TUE_MAX = 540;                 // 8:45..9:00
+
+  let end;
+  if (wd === 1 || wd === 4 || wd === 5) {
+    // Mon/Thu/Fri: inside weekday end window AND within 8:00..8:30
+    const wantMin = start + MON_THU_FRI_MIN;
+    const wantMax = start + MON_THU_FRI_MAX;
+    const interMin = Math.max(eMin, wantMin);
+    const interMax = Math.min(eMax, wantMax);
+    end = (interMin <= interMax) ? randInt(interMin, interMax)
+                                 : Math.max(wantMin, Math.min(wantMax, eMax)); // safety clamp
+  } else if (wd === 2) {
+    // Tuesday: ALWAYS 8:45..9:00 after start (ignore legacy late window)
+    end = randInt(start + TUE_MIN, start + TUE_MAX);
+  } else { // Wednesday
+    // Wednesday: STRICT 8:00..8:30 after start (ignore legacy window)
+    end = randInt(start + WED_MIN, start + WED_MAX);
+  }
+
+  // Pauses
+  const so1 = { start, end: start + randInt(17,20) };
+  const so2 = { start: so1.end + randInt(7,13) }; so2.end = so2.start + randInt(115,130); // 1:55–2:10
+
+  // Ruhepause 31–37 min between 10:50–11:50
+  const ruDur = randInt(31,37);
+  const rpStart = randInt(timeStrToMins('10:50'), timeStrToMins('11:50') - ruDur);
+  const ru = { start: rpStart, end: rpStart + ruDur };
+
+  // Lenk: begins at end of 2nd SO, ends at Arbeitsende
+  const lenk = { start: so2.end, end };
+
+  // Last SO: 15–20 min before end → till end
+  const so3 = { start: end - randInt(15,20), end };
+
+  return { start, end, so1, so2, ru, so3, lenk };
+}
+
+function genPlanGLS(dateStr){
+  const d=deDateStrToDate(dateStr);
+  const wd=d.getDay(); // 1=Mon .. 5=Fri
+
+  const START_MIN = timeStrToMins('05:00'), START_MAX = timeStrToMins('06:30');
+  const END_MIN   = timeStrToMins('15:10'), END_MAX   = timeStrToMins('15:45');
+  const DUR_MIN   = 510, DUR_MAX = 540; // 8:30–9:00
+
+  const start = randInt(START_MIN, START_MAX);
+  let wantMin = Math.max(END_MIN, start + DUR_MIN);
+  let wantMax = Math.min(END_MAX, start + DUR_MAX);
+  if (wantMin > wantMax) {
+    wantMin = Math.max(END_MIN, start + DUR_MIN);
+    wantMax = Math.max(wantMin, Math.min(END_MAX, start + DUR_MAX));
+  }
+  const end = randInt(wantMin, wantMax);
+
+  const so1 = { start, end: start + randInt(15,20) };
+  const so2 = { start: so1.end + randInt(5,10) };
+  so2.end   = so2.start + randInt(115,130); // 1:55–2:10
+
+  const ruDur   = randInt(32,36);
+  const rpStart = randInt(timeStrToMins('09:00'), timeStrToMins('10:30') - ruDur);
+  const ru      = { start: rpStart, end: rpStart + ruDur };
+
+  const so3 = { start: end - randInt(15,20), end };
+
+  const lenk = { start: so2.end, end };
+
+  if (wd>=1 && wd<=5) {
     const dur = end - start;
-    const ruDur = pickRuDurByRule(dur, 32, 36);
-    const rpWinStart = timeStrToMins("10:00");
-    const rpWinEnd = timeStrToMins("12:00");
-    const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-    const ru = { start: rpStart, end: rpStart + ruDur };
-
-    const so3 = { start: end - randInt(15, 20), end };
-    const lenk = { start: so2.end, end };
-
-    return { start, end, so1, so2, ru, so3, lenk };
-  }
-
-  function genPlanDPD(dateStr) {
-    const d = deDateStrToDate(dateStr);
-    const wd = d.getDay();
-    if (wd === 0 || wd === 6) return null;
-
-    let sMin, sMax, eMin, eMax;
-    if (wd === 1) {
-      sMin = timeStrToMins("05:55");
-      sMax = timeStrToMins("06:05");
-      eMin = timeStrToMins("14:25");
-      eMax = timeStrToMins("14:35");
-    } else if (wd === 2) {
-      sMin = timeStrToMins("05:25");
-      sMax = timeStrToMins("05:40");
-      eMin = timeStrToMins("14:55");
-      eMax = timeStrToMins("15:10");
-    } else if (wd === 3) {
-      sMin = timeStrToMins("05:25");
-      sMax = timeStrToMins("05:40");
-      eMin = timeStrToMins("14:55");
-      eMax = timeStrToMins("15:10");
-    } else {
-      sMin = timeStrToMins("05:25");
-      sMax = timeStrToMins("05:40");
-      eMin = timeStrToMins("13:55");
-      eMax = timeStrToMins("14:10");
-    }
-
-    const start = randInt(sMin, sMax);
-
-    const MON_THU_FRI_MIN = 480,
-      MON_THU_FRI_MAX = 510;
-    const WED_MIN = 480,
-      WED_MAX = 510;
-    const TUE_MIN = 525,
-      TUE_MAX = 540;
-
-    let end;
-    if (wd === 1 || wd === 4 || wd === 5) {
-      const wantMin = start + MON_THU_FRI_MIN;
-      const wantMax = start + MON_THU_FRI_MAX;
-      const interMin = Math.max(eMin, wantMin);
-      const interMax = Math.min(eMax, wantMax);
-      end = interMin <= interMax ? randInt(interMin, interMax) : Math.max(wantMin, Math.min(wantMax, eMax));
-    } else if (wd === 2) {
-      end = randInt(start + TUE_MIN, start + TUE_MAX);
-    } else {
-      end = randInt(start + WED_MIN, start + WED_MAX);
-    }
-
-    const so1 = { start, end: start + randInt(17, 20) };
-    const so2 = { start: so1.end + randInt(7, 13) };
-    so2.end = so2.start + randInt(115, 130);
-
-    const dur = end - start;
-    const ruDur = pickRuDurByRule(dur, 31, 37);
-    const rpWinStart = timeStrToMins("10:50");
-    const rpWinEnd = timeStrToMins("11:50");
-    const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-    const ru = { start: rpStart, end: rpStart + ruDur };
-
-    const lenk = { start: so2.end, end };
-    const so3 = { start: end - randInt(15, 20), end };
-
-    return { start, end, so1, so2, ru, so3, lenk };
-  }
-
-  function genPlanGLS(dateStr) {
-    const d = deDateStrToDate(dateStr);
-    const wd = d.getDay();
-    if (wd === 0 || wd === 6) return null;
-
-    const START_MIN = timeStrToMins("05:00"),
-      START_MAX = timeStrToMins("06:30");
-    const END_MIN = timeStrToMins("15:10"),
-      END_MAX = timeStrToMins("15:45");
-    const DUR_MIN = 510,
-      DUR_MAX = 540;
-
-    const start = randInt(START_MIN, START_MAX);
-
-    let wantMin = Math.max(END_MIN, start + DUR_MIN);
-    let wantMax = Math.min(END_MAX, start + DUR_MAX);
-    if (wantMin > wantMax) {
-      wantMin = Math.max(END_MIN, start + DUR_MIN);
-      wantMax = Math.max(wantMin, Math.min(END_MAX, start + DUR_MAX));
-    }
-    let end = randInt(wantMin, wantMax);
-
-    const adjMin = Math.max(END_MIN, start + DUR_MIN);
-    const adjMax = Math.min(END_MAX, start + DUR_MAX);
-    end = Math.min(Math.max(end, adjMin), adjMax);
-
-    const so1 = { start, end: start + randInt(15, 20) };
-    const so2 = { start: so1.end + randInt(5, 10) };
-    so2.end = so2.start + randInt(115, 130);
-
-    const dur = end - start;
-    const ruDur = pickRuDurByRule(dur, 32, 36);
-    const rpWinStart = timeStrToMins("09:00");
-    const rpWinEnd = timeStrToMins("10:30");
-    const rpStart = randInt(rpWinStart, Math.max(rpWinStart, rpWinEnd - ruDur));
-    const ru = { start: rpStart, end: rpStart + ruDur };
-
-    const so3 = { start: end - randInt(15, 20), end };
-    const lenk = { start: so2.end, end };
-
-    return { start, end, so1, so2, ru, so3, lenk };
-  }
-
-  function genPlanByMode(dateStr) {
-    if (state.mode === "DPD") return genPlanDPD(dateStr);
-    if (state.mode === "GLS") return genPlanGLS(dateStr);
-    return genPlanUPS(dateStr);
-  }
-
-  /* ---------------- Completion helpers ---------------- */
-  function getDayStatus(modal) {
-    const start = q(modal, "#start");
-    const end = q(modal, "#end");
-
-    const hasStart = !!(start && start.value && start.value.trim().length >= 4);
-    const hasEnd = !!(end && end.value && end.value.trim().length >= 4);
-
-    const vehRow = q(modal, "#vehicle_dataList_body tr");
-    const hasVehicleRow = !!vehRow;
-
-    const endKm = q(modal, ".end_km") || q(modal, "#end_km");
-    const hasEndKm = !!(endKm && endKm.value && endKm.value.trim().length > 0);
-
-    const lenkEnd = q(modal, "#vehicle_end") || q(modal, 'input[placeholder="Lenkende"]');
-    const lenkStart = q(modal, "#vehicle_start") || q(modal, 'input[placeholder="Lenkbeginn"]');
-    const hasLenkStart = !!(lenkStart && lenkStart.value && lenkStart.value.trim().length >= 4);
-    const hasLenkEnd = !!(lenkEnd && lenkEnd.value && lenkEnd.value.trim().length >= 4);
-
-    const pauses = [];
-    const pauseRows = $$("#pause_dataList_body > tr", modal);
-    for (const tr of pauseRows) {
-      const tds = $$("td", tr);
-      const s = (tds[0]?.textContent || "").trim();
-      const e = (tds[1]?.textContent || "").trim();
-      const type = (tds[2]?.textContent || "").trim();
-      if (!s || !e) continue;
-      const kind = /Ruhepause/i.test(type) ? "RP" : /Sonstige/i.test(type) ? "SO" : "OTHER";
-      pauses.push({ type: kind, s: timeStrToMins(s), e: timeStrToMins(e), raw: type });
-    }
-
-    const isComplete = hasStart && hasEnd && hasVehicleRow && hasLenkStart && hasLenkEnd && hasEndKm && pauses.length >= 3;
-    return { hasStart, hasEnd, hasVehicleRow, hasLenkStart, hasLenkEnd, hasEndKm, pauses, isComplete };
-  }
-
-  function pauseExists(existing, type, s, e) {
-    return existing.some((p) => p.type === type && Math.abs(p.s - s) <= 1 && Math.abs(p.e - e) <= 1);
-  }
-  async function addPause(modal, pauseTypeVal, startStr, endStr, token) {
-    const typeSel = q(modal, "#pause_type");
-    const ps = q(modal, "#pause_start");
-    const pe = q(modal, "#pause_end");
-    if (typeSel) typeSel.value = String(pauseTypeVal);
-    if (typeSel) typeSel.dispatchEvent(new Event("change", { bubbles: true }));
-    await cancellableSleep(120, token);
-    setVal(ps, startStr);
-    await cancellableSleep(120, token);
-    setVal(pe, endStr);
-    await cancellableSleep(160, token);
-    q(modal, "#btn_pause_add")?.click();
-    await cancellableSleep(DELAYS.ajax, token);
-  }
-
-  function getSecondSoEndMins(existing, plan) {
-    if (plan?.so2?.end != null) return plan.so2.end;
-    const sos = existing.filter((p) => p.type === "SO").sort((a, b) => a.s - b.s);
-    return sos.length >= 2 ? sos[1].e : plan.end;
-  }
-
-  function readEndKmFromUIOrTable(modal, dashStartKmInt) {
-    const endField = q(modal, ".end_km") || q(modal, "#end_km");
-    const v = endField?.value || "";
-    const n = parseInt(String(v).replace(/\D/g, ""), 10);
-    if (n) return n;
-    return dashStartKmInt ? dashStartKmInt + randInt(70, 90) : randInt(10000, 90000);
-  }
-
-  async function ensureStartKm(modal, kmInt, token) {
-    const startField = q(modal, ".start_km") || q(modal, "#start_km");
-    if (startField && (!startField.value || !startField.value.trim())) {
-      setVal(startField, String(kmInt));
-      await cancellableSleep(DELAYS.step, token);
+    if (dur < DUR_MIN || dur > DUR_MAX) {
+      const adjMin = Math.max(END_MIN, start + DUR_MIN);
+      const adjMax = Math.min(END_MAX, start + DUR_MAX);
+      const adjEnd = Math.min(Math.max(end, adjMin), adjMax);
+      so3.end = adjEnd;
+      so3.start = adjEnd - randInt(15,20);
+      lenk.end = adjEnd;
+      return { start, end: adjEnd, so1, so2, ru, so3, lenk };
     }
   }
-  async function keepStartKmStable(modal, kmInt, token) {
-    const startField = q(modal, ".start_km") || q(modal, "#start_km");
-    if (!startField) return;
-    const n = parseInt(String(startField.value || "").replace(/\D/g, ""), 10);
-    if (!n || n !== kmInt) {
-      setVal(startField, String(kmInt));
-      await cancellableSleep(DELAYS.step, token);
-    }
+  return { start, end, so1, so2, ru, so3, lenk };
+}
+
+function genPlanByMode(dateStr, extraMins=0){
+  let plan;
+  if(state.mode==='DPD') plan = genPlanDPD(dateStr);
+  else if(state.mode==='GLS') plan = genPlanGLS(dateStr);
+  else plan = genPlanUPS(dateStr);
+
+  if(!plan) return null;
+  extraMins = Math.max(0, Math.floor(extraMins||0));
+  if(extraMins<=0) return plan;
+
+  // Extend Arbeitsende to create Überstunden (UPS/GLS). DPD is intentionally not extended
+  // because its rules are much stricter (duration tied to start).
+  if(state.mode==='DPD') return plan;
+
+  const capEnd = getHardEndCapByMode(dateStr, plan.start);
+  if(capEnd==null) return plan;
+
+  const newEnd = Math.min(capEnd, plan.end + extraMins);
+  const delta = newEnd - plan.end;
+  if(delta<=0) return plan;
+
+  plan.end = newEnd;
+  plan.so3.end = newEnd;
+  plan.so3.start = Math.max(plan.so3.start, newEnd - randInt(15,20));
+  plan.lenk.end = newEnd;
+  return plan;
+}
+
+function getHardEndCapByMode(dateStr, startMins){
+  const d = deDateStrToDate(dateStr);
+  const wd = d.getDay();
+  if(state.mode==='GLS') return timeStrToMins('15:45');
+  // UPS
+  if(state.mode==='UPS'){
+    if(wd===2 || wd===3) return timeStrToMins('16:15');
+    return timeStrToMins('16:00');
   }
+  return null;
+}
 
-  /* ---------------- Core day completion ---------------- */
-  async function completeDayIfNeeded(modal, dateStr, driver, token) {
-    requireToken(token);
-
-    const plan = state.monthPlans && state.monthPlans[dateStr] ? state.monthPlans[dateStr] : genPlanByMode(dateStr);
-    if (!plan) {
-      log(`Übersprungen (Wochenende): ${dateStr}`);
-      return;
-    }
-
-    let status = getDayStatus(modal);
-    const dashStartKmInt = getDashStartKmInt();
-
-    if (status.isComplete) {
-      const endInt = readEndKmFromUIOrTable(modal, dashStartKmInt);
-      setDashKmDot00FromInt(endInt);
-      log(`Übersprungen (vollständig): ${dateStr} — End-KM übernommen: ${endInt}`);
-    } else {
-      // ALWAYS set Arbeitsbeginn + Arbeitsende using setVal (flatpickr time UI safe)
-      const ab = q(modal, "#start");
-      const ae = q(modal, "#end");
-
-      if (ab) {
-        setVal(ab, toTimeStr(plan.start));
-        await cancellableSleep(350, token);
-      } else log("❌ Arbeitsbeginn Feld (#start) nicht gefunden");
-
-      if (ae) {
-        setVal(ae, toTimeStr(plan.end));
-        await cancellableSleep(350, token);
-      } else log("❌ Arbeitsende Feld (#end) nicht gefunden");
-
-      status = getDayStatus(modal);
-
-      if (!status.hasVehicleRow) {
-        const fzg = ($("#mt_fzg")?.value || "").trim();
-        if (fzg) {
-          const ok = await selectVehicleByText(modal, fzg, token);
-          if (ok) await waitForVehicleApplied(fzg, token);
-        }
-
-        await cancellableSleep(DELAYS.step, token);
-
-        if (dashStartKmInt) {
-          await ensureStartKm(modal, dashStartKmInt, token);
-          await keepStartKmStable(modal, dashStartKmInt, token);
-        }
-
-        q(modal, "#btn_vehicle_add")?.click();
-        await cancellableSleep(DELAYS.ajax, token);
-
-        if (dashStartKmInt) await keepStartKmStable(modal, dashStartKmInt, token);
-        status = getDayStatus(modal);
-      }
-
-      if (!status.hasLenkStart || !status.hasLenkEnd || !status.hasEndKm) {
-        const pencil = q(
-          modal,
-          "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success"
-        );
-        if (pencil) {
-          pencil.closest("a,button")?.click();
-          await cancellableSleep(DELAYS.ajax, token);
-        }
-
-        const endField = q(modal, ".end_km") || q(modal, "#end_km");
-        if (endField && !endField.value) {
-          const endKmInt = dashStartKmInt + randInt(70, 90);
-          setVal(endField, String(endKmInt));
-          await cancellableSleep(DELAYS.step, token);
-        }
-
-        const vEnd = q(modal, "#vehicle_end") || q(modal, 'input[placeholder="Lenkende"]');
-        if (vEnd && !vEnd.value) {
-          setVal(vEnd, toTimeStr(plan.lenk.end));
-          await cancellableSleep(DELAYS.step, token);
-        }
-
-        q(modal, "#btn_vehicle_update")?.click();
-        await cancellableSleep(DELAYS.ajax, token);
-        if (dashStartKmInt) await keepStartKmStable(modal, dashStartKmInt, token);
-        status = getDayStatus(modal);
-      }
-
-      const need = [
-        { type: "SO", val: 2, s: plan.so1.start, e: plan.so1.end },
-        { type: "SO", val: 2, s: plan.so2.start, e: plan.so2.end },
-        { type: "RP", val: 0, s: plan.ru.start, e: plan.ru.end },
-        { type: "SO", val: 2, s: plan.so3.start, e: plan.so3.end },
-      ];
-      const existing = status.pauses.slice();
-      for (const n of need) {
-        if (!pauseExists(existing, n.type, n.s, n.e)) {
-          await addPause(modal, n.val, toTimeStr(n.s), toTimeStr(n.e), token);
-          existing.push({ type: n.type, s: n.s, e: n.e });
-        }
-      }
-
-      // Force Lenkbeginn = Ende 2. SO
-      {
-        const lenkBeginMins = getSecondSoEndMins(existing, plan);
-        const desired = toTimeStr(lenkBeginMins);
-
-        const pencil2 = q(
-          modal,
-          "#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success"
-        );
-        if (pencil2) {
-          pencil2.closest("a,button")?.click();
-          await cancellableSleep(DELAYS.ajax, token);
-        }
-
-        const vStart = q(modal, "#vehicle_start") || q(modal, 'input[placeholder="Lenkbeginn"]');
-        if (vStart) {
-          setVal(vStart, desired);
-          await cancellableSleep(DELAYS.step, token);
-        }
-
-        q(modal, "#btn_vehicle_update")?.click();
-        await cancellableSleep(DELAYS.ajax, token);
-        if (dashStartKmInt) await keepStartKmStable(modal, dashStartKmInt, token);
-      }
-
-      const endInt = readEndKmFromUIOrTable(modal, dashStartKmInt);
-      setDashKmDot00FromInt(endInt);
-      log(`✅ ${driver}: ${dateStr} — Start ${toTimeStr(plan.start)} End ${toTimeStr(plan.end)} | RP ${plan.ru.end - plan.ru.start}min (Regel ok)`);
-    }
-
-    await replaySignatureIntoModal(modal, token);
-    await cancellableSleep(200, token);
-
-    await clickKorrekturBeenden(modal, token);
-
-    await cancellableSleep(450, token);
-    q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
+function shuffle(arr){
+  const a=arr.slice();
+  for(let i=a.length-1;i>0;i--){
+    const j=randInt(0,i);
+    [a[i],a[j]]=[a[j],a[i]];
   }
+  return a;
+}
 
-  /* ---------------- Auto runner: current page ---------------- */
-  async function runAuto(token) {
-    state.processedDates.clear();
-    state.lastPickedDate = null;
-    log(`▶️ Auto gestartet (nur aktuelle Seite) — MODE ${state.mode}`);
+function buildOvertimePlanForPage(dateList, otMinH, otMaxH){
+  const plan=new Map();
+  const minH=parseOtHours(otMinH), maxH=parseOtHours(otMaxH);
+  if(maxH<=0 || maxH<minH) return plan;
+  const targetMins = Math.round(randInt(Math.round(minH*60), Math.round(maxH*60)));
+  if(targetMins<=0) return plan;
 
-    state.monthPlans = null;
+  // Eligible: Mon–Fri only
+  const eligible = dateList.filter(ds=>{
+    const d=deDateStrToDate(ds); const wd=d.getDay();
+    return wd>=1 && wd<=5;
+  });
+  if(!eligible.length) return plan;
 
-    const table = findTimeTable();
-    if (!table) {
-      log("❌ Tabelle nicht gefunden (keine td.sorting_1 Datumszellen).");
-      return;
-    }
+  let remaining = targetMins;
+  const chunk = 15;             // 15-min steps
+  const perDayMax = 120;        // don't overdo a single day
 
-    const built = initMonthPlansFromTable(table);
-    if (built?.plans) {
-      state.monthPlans = built.plans;
-      state.monthBaseNet = built.baseNet;
-      state.monthOvertimeTarget = built.overtimeTarget;
-      state.monthTargetNet = built.targetNet;
-      log(`📊 Overtime-Plan: Basis ${Math.round(built.baseNet / 60)}h + Ziel-OT ${Math.round(built.overtimeTarget / 60)}h ⇒ Ziel NET ${Math.round(built.targetNet / 60)}h`);
-    } else {
-      log("ℹ️ Overtime-Plan konnte nicht erstellt werden (keine Datumszeilen gefunden).");
-    }
-
-    while (true) {
-      requireToken(token);
-
-      const tbody = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table.querySelector("tbody");
-      if (!tbody) {
-        log("Kein tbody.");
-        break;
-      }
-
-      const rows = Array.from(tbody.querySelectorAll("tr")).filter((r) => r.querySelector("td.sorting_1"));
-
-      let picked = null,
-        pickedDate = null;
-
-      for (const tr of rows) {
-        const dateStr = getRowDate(tr);
-        if (!dateStr) continue;
-        if (state.processedDates.has(dateStr) || state.lastPickedDate === dateStr) continue;
-
-        const btn = findEditButton(tr);
-        if (!btn) {
-          state.processedDates.add(dateStr);
-          continue;
-        }
-        picked = tr;
-        pickedDate = dateStr;
-        break;
-      }
-
-      if (!picked) {
-        log("🏁 Diese Seite fertig.");
-        break;
-      }
-
-      state.lastPickedDate = pickedDate;
-      const driver = state.currentDriverName || getSelectedDriverName() || "(Unbekannt)";
-      findEditButton(picked).click();
-
-      const modal = await waitForModal(token);
-      if (!modal) {
-        log(`Modal nicht geöffnet: ${pickedDate}`);
-        state.processedDates.add(pickedDate);
-        state.lastPickedDate = null;
-        continue;
-      }
-
-      await cancellableSleep(DELAYS.openWait, token);
-      await completeDayIfNeeded(modal, pickedDate, driver, token);
-
-      await waitForModalClosed(token);
-      await cancellableSleep(DELAYS.afterClose, token);
-
-      state.processedDates.add(pickedDate);
-      state.lastPickedDate = null;
-    }
-  }
-
-  /* ---------------- Duplicate pause cleaner (SO/RP) ---------------- */
-  const CLEAN_CFG = {
-    pauseRowSel: "#pause_dataList_body > tr",
-    deleteBtnSel: 'a[title="Löschen"]',
-    swalConfirmSel: ".swal2-confirm",
+  const dates = shuffle(eligible);
+  const give = (ds, mins)=>{
+    const cur=plan.get(ds)||0;
+    plan.set(ds, cur+mins);
   };
 
-  function readPauseRows(modal) {
-    const rows = $$(CLEAN_CFG.pauseRowSel, modal);
-    return rows.map((tr) => {
-      const tds = $$("td", tr);
-      const start = (tds[0]?.textContent || "").trim();
-      const end = (tds[1]?.textContent || "").trim();
-      const type = (tds[2]?.textContent || "").trim();
-      const del = $(CLEAN_CFG.deleteBtnSel, tds[3] || tr);
-      let kind = "OTHER";
-      if (/^Sonstige\s*Arbeitszeit\s*\(SO\)$/i.test(type)) kind = "SO";
-      else if (/^Ruhepause\s*\(RP\)$/i.test(type)) kind = "RP";
-      return { tr, start, end, rawType: type, kind, del };
-    });
-  }
-  function listDuplicates(rows) {
-    const map = new Map();
-    for (const r of rows) {
-      if (r.kind !== "SO" && r.kind !== "RP") continue;
-      const key = `${r.kind}|${r.start}|${r.end}`;
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(r);
+  // multi-pass distribution
+  let safety=2000;
+  while(remaining>0 && safety-- > 0){
+    let progressed=false;
+    for(const ds of dates){
+      if(remaining<=0) break;
+      const cur=plan.get(ds)||0;
+      const room = perDayMax - cur;
+      if(room<=0) continue;
+      const maxGive = Math.min(room, remaining);
+      const steps = Math.max(1, Math.floor(maxGive/chunk));
+      const stepGive = Math.min(maxGive, chunk*randInt(1, steps));
+      give(ds, stepGive);
+      remaining -= stepGive;
+      progressed=true;
     }
-    const dups = [];
-    for (const [key, arr] of map) if (arr.length > 1) dups.push({ key, keep: arr[0], extras: arr.slice(1) });
-    return dups;
+    if(!progressed) break;
   }
-  async function deletePauseRow(rowObj, token) {
-    const btn = rowObj?.del;
-    if (!btn) return false;
-    try { btn.scrollIntoView({ block: "center" }); } catch {}
-    await cancellableSleep(80, token);
-    btn.click();
-    await cancellableSleep(700, token);
 
-    const t0 = Date.now();
-    while (Date.now() - t0 < 6000) {
-      const confirm = $(CLEAN_CFG.swalConfirmSel);
-      if (confirm) {
-        confirm.click();
-        await cancellableSleep(800, token);
-        break;
-      }
-      await cancellableSleep(120, token);
-    }
-    return true;
+  if(remaining>0){
+    log(`⚠️ Überstunden Ziel zu hoch für diese Seite: Rest ${remaining} min nicht platzierbar (pro Tag max ${perDayMax} min).`);
+  } else {
+    const total = Array.from(plan.values()).reduce((a,b)=>a+b,0);
+    log(`🧮 Überstunden-Plan: Ziel ${Math.round(targetMins/60*10)/10}h (${targetMins} min), verteilt auf ${plan.size} Tage.`);
   }
-  async function cleanDuplicatesInOpenModal(modal, token) {
-    const rows = readPauseRows(modal);
-    const dups = listDuplicates(rows);
-    if (!dups.length) {
-      log("🧼 Keine Duplikate gefunden.");
-      return 0;
-    }
-    let removed = 0;
-    for (const d of dups) {
-      for (const ex of d.extras) {
-        requireToken(token);
-        const ok = await deletePauseRow(ex, token);
-        if (ok) removed++;
-        await cancellableSleep(250, token);
-      }
-    }
-    log(`🧼 Duplikate entfernt: ${removed}`);
-    return removed;
+  return plan;
+}
+
+
+/* ---------------- Pause helpers (shared) ---------------- */
+function normalizePauseType(t){const x=(t||'').toUpperCase();if(x.includes('RUHE')||x.includes('RP'))return 'RP';if(x.includes('SO'))return 'SO';return x.slice(0,3);}
+function parsePauses(modal){const rows=qa(modal,'#pause_dataList_body tr');return rows.map(r=>{const tds=r.querySelectorAll('td');if(tds.length<3)return null;const from=tds[0].textContent.trim(),to=tds[1].textContent.trim(),type=normalizePauseType(tds[2].textContent.trim());const s=timeStrToMins(from),e=timeStrToMins(to);if(s==null||e==null)return null;return {type,s,e};}).filter(Boolean);}
+function overlaps(a1,a2,b1,b2){const s=Math.max(a1,b1),e=Math.min(a2,b2);return e>s && ((Math.abs(a1-b1)<=3 && Math.abs(a2-b1)<=3) || (e-s)/Math.min(a2-a1,b2-b1)>=0.8);}
+function pauseExists(existing,type,s,e){return existing.some(p=>p.type===type && overlaps(p.s,p.e,s,e));}
+async function addPause(modal,t,ss,ee,token){setVal(q(modal,'#pause_start'),ss); await cancellableSleep(DELAYS.step,token);setVal(q(modal,'#pause_end'),ee); await cancellableSleep(DELAYS.step,token);
+  const pt=q(modal,'#pause_type'); if(pt){pt.value=String(t);pt.dispatchEvent(new Event('change',{bubbles:true}));}
+  await cancellableSleep(DELAYS.step,token);
+  (q(modal,'#btn_pause_add')||qa(modal,'button,a').find(b=>/Pause hinzufügen|Add Pause/i.test(b.textContent||'')))?.click();
+  await cancellableSleep(DELAYS.ajax,token);
+}
+
+/* ---------------- Vehicle / StartKM helpers ---------------- */
+function selectVehicleByText(modal,txt){const s=q(modal,'#working_time_vehicle_id');if(!s||!txt)return false;const o=[...s.options].find(x=>x.text.trim()===txt.trim());if(!o)return false;s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}));return true;}
+function getStartKmInput(modal){const exact=q(modal,'#start_km')||q(modal,'input[name="start_km"]'); if(exact) return exact;
+  const candidates=qa(modal,'input[placeholder], input[id], input[name]');
+  for(const el of candidates){const ph=(el.getAttribute('placeholder')||'').toLowerCase(), id=(el.id||'').toLowerCase(), nm=(el.name||'').toLowerCase();
+    const looks=/start\s*km/.test(ph)||/^start_km$/.test(id)||/^start_km$/.test(nm);
+    const isEnd=el.classList.contains('end_km')||/end[_\s-]*km/.test(ph)||/end[_-]?km/.test(id)||/end[_-]?km/.test(nm);
+    const inTbl=!!el.closest('#vehicle_dataList_body');
+    if(looks&&!isEnd&&!inTbl) return el;
   }
-  async function cleanOneOpen(token) {
-    const modal = $(".modal.show, .modal.in, .modal.fade.show");
-    if (!modal) {
-      alert("Kein offenes Modal gefunden.");
-      return;
+  return null;
+}
+function getDashStartKmInt(){return parseKmInt($('#mt_km')?.value||'');}
+async function ensureStartKm(modal,valInt,token){const el=getStartKmInput(modal);if(!el){log('⚠️ Start-KM Feld nicht gefunden');return;}const v=String(parseKmInt(valInt));if((el.value||'').trim()!==v){setVal(el,v);await cancellableSleep(DELAYS.step,token);log(`Start-KM gesetzt: ${v}`);}}
+async function keepStartKmStable(modal,valInt,token,tries=8){for(let i=0;i<tries;i++){await ensureStartKm(modal,valInt,token);await cancellableSleep(DELAYS.retry,token);}}
+function readEndKmFromUIOrTable(modal,startKmInt){const endInput=q(modal,'.end_km')||q(modal,'#end_km');if(endInput&&endInput.value) return parseKmInt(endInput.value);
+  const tb=q(modal,'#vehicle_dataList_body'); if(tb){const row=tb.querySelector('tr:last-child'); if(row){const nums=Array.from(row.querySelectorAll('td,th')).map(n=>parseKmInt(n.textContent)).filter(n=>n>0);
+        const good=nums.filter(n=>n>=startKmInt); const chosen=good.length?Math.max(...good):(nums.length?Math.max(...nums):0); if(chosen){log(`End-KM erkannt (Tabelle): ${chosen}`);return chosen;}
+  }}
+  const fb=startKmInt+80; log(`⚠️ End-KM nicht gefunden — Fallback: ${fb}`); return fb;
+}
+function getSecondSoEndMins(pauses,plan){const sos=pauses.filter(p=>p.type==='SO').sort((a,b)=>a.s-b.s);return (sos.length>=2)?sos[1].e:plan.so2.end;}
+function getFzgFromDash(){const name = state.currentDriverName || getSelectedDriverName(); const profiles=loadProfiles(); const prof=profiles[profileKey(name)]; return (prof?.fahrzeug || $('#mt_fzg')?.value || '').trim();}
+
+/* ---------------- Completion (shared, uses plan by mode) ---------------- */
+function getDayStatus(modal){
+  const hasStart=!!(q(modal,'#start')?.value?.trim());
+  const hasEnd  =!!(q(modal,'#end')?.value?.trim());
+  const startKmEl=getStartKmInput(modal);
+  const hasStartKm=!!(startKmEl&&startKmEl.value&&startKmEl.value.trim());
+  const tb=q(modal,'#vehicle_dataList_body');
+  const hasVehicleRow=!!(tb&&tb.querySelector('tr'));
+  let hasLenkStart=false,hasLenkEnd=false,hasEndKm=false;
+  if(hasVehicleRow){
+    const vStart=q(modal,'#vehicle_start')||q(modal,'input[placeholder="Lenkbeginn"]');
+    const vEnd=q(modal,'#vehicle_end')||q(modal,'input[placeholder="Lenkende"]');
+    const endKm=q(modal,'.end_km')||q(modal,'#end_km');
+    if(vStart&&vStart.value)hasLenkStart=true;
+    if(vEnd&&vEnd.value)hasLenkEnd=true;
+    if(endKm&&endKm.value)hasEndKm=true;
+    if(!(hasLenkStart&&hasLenkEnd)){
+      const last=tb.querySelector('tr:last-child');
+      if(last){const times=(last.textContent||'').match(/\b\d{2}:\d{2}\b/g)||[]; if(times[0])hasLenkStart=true; if(times[1])hasLenkEnd=true;}
     }
-    await cleanDuplicatesInOpenModal(modal, token);
+    if(!hasEndKm){const last=tb.querySelector('tr:last-child'); if(last){const nums=Array.from(last.querySelectorAll('td')).map(td=>parseKmInt(td.textContent)).filter(n=>n>0); if(nums.length)hasEndKm=true;}}
   }
-  async function cleanPageCurrentDriver(token) {
-    const table = findTimeTable();
-    if (!table) {
-      log("Tabelle nicht gefunden.");
-      return;
-    }
-    const tbody = table.tBodies && table.tBodies[0] ? table.tBodies[0] : table.querySelector("tbody");
-    const rows = Array.from(tbody.querySelectorAll("tr")).filter((r) => r.querySelector("td.sorting_1"));
-    for (const tr of rows) {
-      requireToken(token);
-      const btn = findEditButton(tr);
-      if (!btn) continue;
+  const pauses=parsePauses(modal);
+  const soCount=pauses.filter(p=>p.type==='SO').length;
+  const rpCount=pauses.filter(p=>p.type==='RP').length;
+  const isComplete=hasStart&&hasEnd&&hasVehicleRow&&hasLenkStart&&hasLenkEnd&&hasEndKm&&(soCount>=3)&&(rpCount>=1);
+  return {hasStart,hasEnd,hasStartKm,hasVehicleRow,hasLenkStart,hasLenkEnd,hasEndKm,pauses,isComplete,startKmEl};
+}
+
+function findKorrekturBeendenBtn(modal){
+  return q(modal,'button[type="submit"][title*="Korrektur Beenden" i]')
+      || qa(modal,'button[type="submit"]').find(b=>/Korrektur\s*Beenden/i.test(b.textContent||''))
+      || qa(modal,'button, a').find(b=>/Korrektur\s*Beenden/i.test(b.textContent||''));
+}
+async function clickKorrekturBeenden(modal,token){
+  let btn=findKorrekturBeendenBtn(modal);
+  if(!btn){ log('⚠️ Korrektur-Beenden Button nicht gefunden'); return false; }
+  const form=btn.closest('form')||modal.querySelector('form');
+  log('Korrektur Beenden: Submit init');
+  try{
+    if(form&&typeof form.requestSubmit==='function'){ form.requestSubmit(btn); }
+    else {
+      try{btn.focus();}catch{}
       btn.click();
-      const modal = await waitForModal(token);
-      if (!modal) continue;
-      await cancellableSleep(DELAYS.openWait, token);
-      await cleanDuplicatesInOpenModal(modal, token);
-
-      await clickKorrekturBeenden(modal, token);
-      await cancellableSleep(450, token);
-      q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
-
-      await waitForModalClosed(token);
-      await cancellableSleep(DELAYS.afterClose, token);
+      await cancellableSleep(350,token);
+      if(!$('.swal2-container')&&!findConfirmYesButton()){ if(form&&typeof form.submit==='function') form.submit(); }
     }
-  }
-  async function cleanAllPagesForCurrentDriver(token) {
-    await cleanPageCurrentDriver(token);
-  }
+  }catch(e){console.warn('Submit-Fallback Fehler:',e);}
+  await cancellableSleep(600,token);
+  return true;
+}
 
-  /* ---------------- Multi driver ---------------- */
-  function parseDriverList() {
-    const raw = ($("#mt_driver_list")?.value || "").trim();
-    if (!raw) return [];
-    return raw
-      .split(/\r?\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
-  }
+async function completeDayIfNeeded(modal,dateStr,driver,token){
+  requireToken(token);
+  const extra=(state.otPlan && state.otPlan.get(dateStr)) || 0;
+  const plan=genPlanByMode(dateStr, extra);
+  if(!plan){ log(`Übersprungen (Wochenende): ${dateStr}`); return; }
 
-  async function runMultiDrivers(token) {
-    const list = parseDriverList();
-    if (!list.length) {
-      alert("Bitte Fahrer-Liste einfügen (eine Zeile pro Fahrer).");
-      throw ABORT;
+  let status=getDayStatus(modal);
+  const dashStartKmInt=getDashStartKmInt();
+
+  if(status.isComplete){
+    const endInt=readEndKmFromUIOrTable(modal,dashStartKmInt);
+    setDashKmDot00FromInt(endInt);
+    log(`Übersprungen (vollständig): ${dateStr} — End-KM übernommen: ${endInt}`);
+  } else {
+    if(!status.hasStart){ setVal(q(modal,'#start'), toTimeStr(plan.start)); await cancellableSleep(DELAYS.step,token); }
+
+    if(!status.hasVehicleRow){
+      const fzg=getFzgFromDash();
+      if(fzg) selectVehicleByText(modal,fzg);
+      await cancellableSleep(DELAYS.step,token);
+
+      if(dashStartKmInt){ await ensureStartKm(modal,dashStartKmInt,token); await keepStartKmStable(modal,dashStartKmInt,token); }
+
+      q(modal,'#btn_vehicle_add')?.click();
+      await cancellableSleep(DELAYS.ajax,token);
+
+      if(dashStartKmInt) await keepStartKmStable(modal,dashStartKmInt,token);
+      status=getDayStatus(modal);
     }
-    log(`Multi Start: ${list.length} Fahrer — MODE ${state.mode}`);
 
-    for (const name of list) {
-      requireToken(token);
-
-      const ok = await selectDriverByName(name, token);
-      if (!ok) {
-        log(`❌ Fahrer nicht gefunden im Dropdown: ${name}`);
-        continue;
-      }
-
-      await waitForDriverApplied(name, token);
-      state.currentDriverName = name;
-
-      loadProfileToDashboard(name);
-      await waitForReady(name, token);
-
-      if (!saveCurrentSetupToProfile()) {
-        log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${name}`);
-        throw ABORT;
-      }
-
-      await runAuto(token);
-
-      log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${name}`);
-      await cleanAllPagesForCurrentDriver(token);
-
-      state.currentDriverName = null;
-      setReady(false);
-      log(`✅ Fahrer fertig: ${name}`);
+    if(!status.hasLenkStart||!status.hasLenkEnd||!status.hasEndKm){
+      const pencil=q(modal,'#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success');
+      if(pencil){pencil.closest('a,button')?.click();await cancellableSleep(DELAYS.ajax,token);}
+      const endField=q(modal,'.end_km')||q(modal,'#end_km');
+      if(endField&&!endField.value){ const endKmInt=dashStartKmInt+randInt(70,90); setVal(endField,String(endKmInt)); await cancellableSleep(DELAYS.step,token); }
+      const vEnd=q(modal,'#vehicle_end')||q(modal,'input[placeholder="Lenkende"]');
+      if(vEnd&&!vEnd.value){ setVal(vEnd,toTimeStr(plan.lenk.end)); await cancellableSleep(DELAYS.step,token); }
+      q(modal,'#btn_vehicle_update')?.click();
+      await cancellableSleep(DELAYS.ajax,token);
+      if(dashStartKmInt) await keepStartKmStable(modal,dashStartKmInt,token);
+      status=getDayStatus(modal);
     }
-    log("✅ Multi fertig");
+
+    // Pausen add-only per selected mode plan
+    const need=[
+      {type:'SO',val:2,s:plan.so1.start,e:plan.so1.end},
+      {type:'SO',val:2,s:plan.so2.start,e:plan.so2.end},
+      {type:'RP',val:0,s:plan.ru.start,e:plan.ru.end},
+      {type:'SO',val:2,s:plan.so3.start,e:plan.so3.end}
+    ];
+    const existing=status.pauses.slice();
+    for(const n of need){
+      if(!pauseExists(existing,n.type,n.s,n.e)){
+        await addPause(modal,n.val,toTimeStr(n.s),toTimeStr(n.e),token);
+        existing.push({type:n.type,s:n.s,e:n.e});
+      }
+    }
+
+    // Force Lenkbeginn = Ende 2. SO
+    {
+      const lenkBeginMins=getSecondSoEndMins(existing,plan);
+      const desired=toTimeStr(lenkBeginMins);
+      const pencil2=q(modal,'#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success');
+      if(pencil2){pencil2.closest('a,button')?.click();await cancellableSleep(DELAYS.ajax,token);}
+      const vStart=q(modal,'#vehicle_start')||q(modal,'input[placeholder="Lenkbeginn"]');
+      const vEnd=q(modal,'#vehicle_end')||q(modal,'input[placeholder="Lenkende"]');
+      if(vStart&&vStart.value!==desired){ setVal(vStart,desired); await cancellableSleep(DELAYS.step,token); }
+      if(vEnd&&!vEnd.value){ setVal(vEnd,toTimeStr(plan.lenk.end)); await cancellableSleep(DELAYS.step,token); }
+      q(modal,'#btn_vehicle_update')?.click();
+      await cancellableSleep(DELAYS.ajax,token);
+      if(dashStartKmInt) await keepStartKmStable(modal,dashStartKmInt,token);
+    }
+
+    if(!status.hasEnd){ setVal(q(modal,'#end'), toTimeStr(plan.end)); await cancellableSleep(DELAYS.step,token); }
+
+    await replaySignature(modal, driver, token);
+
+    const endInt=readEndKmFromUIOrTable(modal,dashStartKmInt);
+    setDashKmDot00FromInt(endInt);
+    log(`End-KM vor Schließen: ${endInt}`);
   }
 
-  /* ---------------- Buttons wiring (KEEP ALL FORMS) ---------------- */
-  function wireButtons() {
-    $("#mt_stop").addEventListener("click", () => {
-      state.runToken++;
-      setRunning(false);
-      setReady(false);
-      log("Stop gedrückt: Abbruch läuft …");
-    });
+  const readyToClose=(q(modal,'#end')?.value && (q(modal,'#vehicle_dataList_body')?.querySelector('tr')));
+  if(readyToClose){
+    const clicked=await clickKorrekturBeenden(modal,token);
+    if(clicked){
+      const yesBtn=await waitForSwalConfirm(token);
+      if(yesBtn){ yesBtn.click(); log('Ja geklickt'); await cancellableSleep(DELAYS.swal,token); }
+      else log('⚠️ Kein Bestätigungsbutton gefunden');
+    }
+    await waitForModalClosed(token);
+    await cancellableSleep(DELAYS.afterClose,token);
+  }
 
-    $("#mt_ready_btn").addEventListener("click", () => {
-      const drv = state.currentDriverName || getSelectedDriverName();
-      if (!drv || /Alle Auswählen/i.test(drv)) {
-        alert('Bitte einen Fahrer auswählen (nicht "Alle Auswählen").');
-        return;
-      }
+  log(`Bearbeitet: ${dateStr} — MODE ${state.mode}.`);
+}
+
+/* ---------------- Table helpers ---------------- */
+function findTimeTable(){
+  let t=$('#data_table')||$('#datatable');
+  if(t) return t;
+  const tables=Array.from(document.querySelectorAll('table'));
+  const ranked=tables.map(tbl=>{const s=(tbl.textContent||'').toLowerCase();let score=0;if(s.includes('datum'))score++;if(s.includes('aktionen'))score++;if(s.includes('arbeitsbeginn'))score++;return {tbl,score};}).sort((a,b)=>b.score-a.score);
+  return ranked[0]?.tbl||null;
+}
+function getRowDate(tr){
+  // Prefer explicit date column (2nd <td>) as provided in Transportlogy table HTML
+  const tds = tr.querySelectorAll('td');
+  const cand = (tds[1]?.textContent||'').trim();
+  if(/\b\d{2}\.\d{2}\.\d{4}\b/.test(cand)) return cand.match(/\b\d{2}\.\d{2}\.\d{4}\b/)[0];
+
+  // Fallbacks
+  const cell=tr.querySelector('td.sorting_1');
+  if(cell){const m=cell.textContent.trim().match(/\b\d{2}\.\d{2}\.\d{4}\b/); if(m) return m[0];}
+  const m2=(tr.textContent||'').match(/\b\d{2}\.\d{2}\.\d{4}\b/);
+  return m2?m2[0]:null;
+}
+function findEditButton(tr){
+  return tr.querySelector('a[onclick*="updateElement"]')
+      || tr.querySelector('a[title*="Bearbeiten" i], button[title*="Bearbeiten" i]')
+      || tr.querySelector('a[href*="working_time"][data-target="#working_time_modal"]')
+      || tr.querySelector('a[href*="working_time"], button[data-target="#working_time_modal"]')
+      || tr.querySelector('a .fa-pencil, a .fa-pencil-alt, a .fas.fa-pencil-alt, a.text-success, button .fa-pencil, button .fa-pencil-alt')?.closest('a,button');
+}
+
+/* ---------------- Auto loop (CURRENT PAGE ONLY) ---------------- */
+async function runAuto(token){
+  state.processedDates.clear();
+  state.lastPickedDate=null;
+  log(`▶️ Auto gestartet (nur aktuelle Seite) — MODE ${state.mode}`);
+
+  // Build Überstunden plan for this page (per driver profile)
+  try{
+    const drv = state.currentDriverName || getSelectedDriverName();
+    const profiles=loadProfiles();
+    const prof=profiles[profileKey(drv||'')]||{};
+    const table=findTimeTable();
+    const tbody=table?.tBodies?.[0] || table?.querySelector?.('tbody');
+    const rows=tbody? Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td')) : [];
+    const dates=Array.from(new Set(rows.map(r=>getRowDate(r)).filter(Boolean)));
+    state.otPlan = buildOvertimePlanForPage(dates, prof.otMin, prof.otMax);
+  }catch(e){ state.otPlan = new Map(); }
+
+  while(true){
+    requireToken(token);
+    const table=findTimeTable();
+    if(!table){log('Tabelle nicht gefunden.');break;}
+    const tbody=table.tBodies && table.tBodies[0] ? table.tBodies[0] : table.querySelector('tbody');
+    if(!tbody){log('Kein tbody.');break;}
+    const rows=Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td'));
+    let picked=null,pickedDate=null;
+    for(const tr of rows){
+      const dateStr=getRowDate(tr);
+      if(!dateStr) continue;
+      if(state.processedDates.has(dateStr) || state.lastPickedDate===dateStr) continue;
+      const btn=findEditButton(tr);
+      if(!btn){ state.processedDates.add(dateStr); continue; }
+      picked=tr; pickedDate=dateStr; break;
+    }
+    if(!picked){ log('🏁 Diese Seite fertig.'); break; }
+
+    state.lastPickedDate=pickedDate;
+    const driver = state.currentDriverName || getSelectedDriverName() || '(Unbekannt)';
+    findEditButton(picked).click();
+
+    const modal=await waitForModal(token);
+    if(!modal){ log(`Modal nicht geöffnet: ${pickedDate}`); state.processedDates.add(pickedDate); state.lastPickedDate=null; continue; }
+    await cancellableSleep(DELAYS.openWait,token);
+
+    await completeDayIfNeeded(modal,pickedDate,driver,token);
+
+    await waitForModalClosed(token);
+    await cancellableSleep(DELAYS.afterClose,token);
+
+    state.processedDates.add(pickedDate);
+    state.lastPickedDate=null;
+  }
+}
+
+/* ---------------- Duplicate pause cleaner (SO/RP) ---------------- */
+const CLEAN_CFG={
+  pauseRowSel:'#pause_dataList_body > tr',
+  deleteBtnSel:'a[title="Löschen"]',
+  swalConfirmSel:'.swal2-confirm'
+};
+function readPauseRows(modal){
+  const rows=$$(CLEAN_CFG.pauseRowSel, modal);
+  return rows.map(tr=>{
+    const tds=$$('td', tr);
+    const start=(tds[0]?.textContent||'').trim();
+    const end=(tds[1]?.textContent||'').trim();
+    const type=(tds[2]?.textContent||'').trim();
+    const del=$(CLEAN_CFG.deleteBtnSel, tds[3]||tr);
+    let kind='OTHER';
+    if(/^Sonstige\s*Arbeitszeit\s*\(SO\)$/i.test(type)) kind='SO';
+    else if(/^Ruhepause\s*\(RP\)$/i.test(type)) kind='RP';
+    return {tr,start,end,rawType:type,kind,del};
+  });
+}
+function listDuplicates(rows){
+  const map=new Map();
+  for(const r of rows){
+    if(r.kind!=='SO' && r.kind!=='RP') continue;
+    const key=`${r.kind}|${r.start}|${r.end}`;
+    if(!map.has(key)) map.set(key, []);
+    map.get(key).push(r);
+  }
+  const dups=[];
+  for(const [key, arr] of map){ if(arr.length>1) dups.push({key, keep:arr[0], extras:arr.slice(1)}); }
+  return dups;
+}
+async function deletePauseRow(rowObj, token){
+  const btn=rowObj?.del; if(!btn) return false;
+  try{btn.scrollIntoView({block:'center'});}catch{}
+  await cancellableSleep(80, token);
+  btn.click();
+  await cancellableSleep(700, token);
+  const t0=Date.now();
+  while(Date.now()-t0<6000){
+    const confirm=$(CLEAN_CFG.swalConfirmSel);
+    if(confirm){ confirm.click(); await cancellableSleep(800, token); break; }
+    await cancellableSleep(150, token);
+  }
+  await cancellableSleep(650, token);
+  return true;
+}
+async function removeAllDuplicates(modal, token){
+  let safety=40;
+  while(safety-- > 0){
+    const rows=readPauseRows(modal);
+    const dups=listDuplicates(rows);
+    if(dups.length===0) return true;
+    const target=dups[0].extras[0];
+    log(`🧹 Entferne Duplikat: ${target.kind} ${target.start}–${target.end}`);
+    const ok=await deletePauseRow(target, token);
+    if(!ok) return false;
+  }
+  return false;
+}
+async function cleanOneOpenModal(token){
+  const modal=await waitForModal(token);
+  if(!modal || !modal.classList.contains('show')){ log('Bitte zuerst einen Tag öffnen (Bearbeiten).'); throw ABORT; }
+  await cancellableSleep(1200, token);
+  await removeAllDuplicates(modal, token);
+  log('✅ Duplikate im offenen Tag entfernt (wenn vorhanden).');
+}
+async function cleanPageForCurrentDriver(token){
+  // iterate rows on current page; open each date once; clean; save (Korrektur Beenden)
+  const table=findTimeTable(); if(!table){log('Tabelle nicht gefunden.'); throw ABORT;}
+  const tbody=table.tBodies[0]||table.querySelector('tbody'); if(!tbody) throw ABORT;
+  const rows=Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td'));
+  const processed=new Set();
+  for(const tr of rows){
+    requireToken(token);
+    const dateStr=getRowDate(tr); if(!dateStr || processed.has(dateStr)) continue;
+    const btn=findEditButton(tr); if(!btn){processed.add(dateStr);continue;}
+    btn.click();
+    const modal=await waitForModal(token); if(!modal){processed.add(dateStr);continue;}
+    await cancellableSleep(2000, token);
+    await removeAllDuplicates(modal, token);
+    await clickKorrekturBeenden(modal, token);
+    const yes=await waitForSwalConfirm(token); if(yes) yes.click();
+    await waitForModalClosed(token);
+    await cancellableSleep(DELAYS.afterClose, token);
+    processed.add(dateStr);
+  }
+  log('✅ Duplikate (diese Seite) fertig.');
+}
+function findNextLink(){
+  let link = $('#data_table_paginate li.next:not(.disabled) a.page-link');
+  if(link) return link;
+  link = $('a.page-link[aria-controls="data_table"][data-dt-idx="next"]');
+  if(link){ const li=link.closest('li'); if(!li || !li.classList.contains('disabled')) return link; }
+  const candidates = $$('.page-link');
+  for(const a of candidates){
+    const txt=(a.textContent||'').trim().toLowerCase();
+    if(txt==='nächste'||txt==='naechste'||txt==='next'){ const li=a.closest('li'); if(!li||!li.classList.contains('disabled')) return a; }
+  }
+  return null;
+}
+async function waitForTableRedraw(prevFirstDateText, token){
+  const t0=Date.now();
+  while(Date.now()-t0 < DELAYS.tableRedrawTimeout){
+    requireToken(token);
+    const firstRow=$('#data_table tbody tr');
+    if(firstRow){
+      const firstDate=(firstRow.querySelector('td.sorting_1')?.textContent||'').trim();
+      if(firstDate && firstDate !== prevFirstDateText) return true;
+    }
+    await cancellableSleep(DELAYS.tableRedrawPoll, token);
+  }
+  return false;
+}
+async function cleanAllPagesForCurrentDriver(token){
+  let page=1;
+  while(true){
+    requireToken(token);
+    log(`🧹 Duplikate: Seite ${page}…`);
+    const firstRowBefore=$('#data_table tbody tr');
+    const firstDateBefore=(firstRowBefore?.querySelector('td.sorting_1')?.textContent||'').trim();
+    await cleanPageForCurrentDriver(token);
+    const next=findNextLink();
+    if(!next){ log('🏁 Duplikate: Keine weiteren Seiten.'); break; }
+    next.click();
+    await cancellableSleep(DELAYS.pageTurn, token);
+    await waitForTableRedraw(firstDateBefore, token);
+    page++;
+  }
+  log('✅ Duplikate: ganzer Fahrer fertig.');
+}
+
+/* ---------------- Single day / Multi drivers ---------------- */
+async function runOneDay(token){
+  const modal=await waitForModal(token);
+  if(!modal || !modal.classList.contains('show')){ log('Bitte zuerst einen Tag öffnen (Bearbeiten).'); throw ABORT; }
+  await cancellableSleep(DELAYS.openWait,token);
+  let dateStr=(q(modal,'#end_date')?.value||q(modal,'#start_date')?.value||'').trim();
+  if(!/^\d{2}\.\d{2}\.\d{4}$/.test(dateStr)){const m=(modal.textContent||'').match(/\b\d{2}\.\d{2}\.\d{4}\b/);dateStr=m?m[0]:'';}
+  if(!dateStr){log('Datum im Modal nicht gefunden'); throw ABORT;}
+  const driver = state.currentDriverName || getSelectedDriverName() || '(Nur 1 Tag)';
+  await completeDayIfNeeded(modal,dateStr,driver,token);
+}
+
+function parseDriverList(){
+  const raw=($('#mt_driver_list')?.value||'').trim();
+  if(!raw) return [];
+  return raw.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
+}
+
+async function runMultiDrivers(token){
+  const list=parseDriverList();
+  if(!list.length){alert('Bitte Fahrer-Liste einfügen (eine Zeile pro Fahrer).'); throw ABORT;}
+  log(`Multi Start: ${list.length} Fahrer — MODE ${state.mode}`);
+
+  for(const name of list){
+    requireToken(token);
+    if(!selectDriverByName(name)){ log(`❌ Fahrer nicht gefunden im Dropdown: ${name}`); continue; }
+    await waitForDriverApplied(name, token);
+    state.currentDriverName=name;
+    state.cleanedThisDriver=false;
+
+    loadProfileToDashboard(name);
+    await waitForReady(name, token);
+
+    if(!saveCurrentSetupToProfile()){ log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${name}`); throw ABORT; }
+
+    await runAuto(token);
+
+    // After hours finished: run cleaner over whole driver (optional button also exists)
+    log(`🧹 Starte Duplikate-Cleaner (ganzer Fahrer): ${name}`);
+    await cleanAllPagesForCurrentDriver(token);
+
+    state.currentDriverName=null;
+    setReady(false);
+    log(`✅ Fahrer fertig: ${name}`);
+  }
+  log('✅ Multi fertig');
+}
+
+/* ---------------- Buttons wiring ---------------- */
+function wireButtons(){
+  $('#mt_stop').addEventListener('click',()=>{ state.runToken++; setRunning(false); setReady(false); log('Stop gedrückt: Abbruch läuft …'); });
+
+  $('#mt_ready_btn').addEventListener('click',()=>{
+    const drv = state.currentDriverName || getSelectedDriverName();
+    if(!drv || /Alle Auswählen/i.test(drv)){ alert('Bitte zuerst einen Fahrer auswählen (nicht "Alle Auswählen").'); return; }
+    const fzg=($('#mt_fzg')?.value||'').trim();
+    const km=parseKmInt($('#mt_km')?.value||'');
+    if(!fzg || !km){ alert('Bitte Fahrzeug + Start-KM eingeben.'); return; }
+    if(!sigPadHasInk()){ alert('Bitte Signatur zeichnen.'); return; }
+    state.currentDriverName = drv;
+    if(!saveCurrentSetupToProfile()){ alert('Setup konnte nicht gespeichert werden (prüfe Fahrzeug/KM/Signatur).'); return; }
+    setReady(true);
+    log(`✅ ALLES BEREIT gesetzt: ${drv} (MODE ${state.mode})`);
+  });
+
+  $('#mt_start_auto').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{
+      const drv=getSelectedDriverName();
+      if(!drv || /Alle Auswählen/i.test(drv)){ alert('Bitte einen Fahrer auswählen (nicht "Alle Auswählen").'); throw ABORT; }
+      state.currentDriverName=drv;
       loadProfileToDashboard(drv);
-      if (isDashboardReady()) {
-        setReady(true);
-        log(`✅ Bereit: ${drv}`);
-        saveCurrentSetupToProfile();
-      } else {
-        alert("Bitte Fahrzeug + Start-KM + Signatur ausfüllen.");
-        setReady(false);
-      }
-    });
+      await waitForReady(drv, token);
+      if(!saveCurrentSetupToProfile()){ log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${drv}`); throw ABORT; }
+      await runAuto(token);
+    }catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'Auto(1)'); }
+    finally{ state.currentDriverName=null; setRunning(false); setReady(false); }
+  });
 
-    $("#mt_start_auto").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        const drv = getSelectedDriverName();
-        if (!drv || /Alle Auswählen/i.test(drv)) {
-          alert('Bitte einen Fahrer auswählen (nicht "Alle Auswählen").');
-          throw ABORT;
-        }
-        state.currentDriverName = drv;
-        loadProfileToDashboard(drv);
-        await waitForReady(drv, token);
+  $('#mt_one_day').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{
+      const drv = state.currentDriverName || getSelectedDriverName();
+      if(!drv || /Alle Auswählen/i.test(drv)){ alert('Bitte einen Fahrer auswählen (nicht "Alle Auswählen").'); throw ABORT; }
+      state.currentDriverName=drv;
+      loadProfileToDashboard(drv);
+      await waitForReady(drv, token);
+      if(!saveCurrentSetupToProfile()){ log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${drv}`); throw ABORT; }
+      await runOneDay(token);
+    }catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OneDay'); }
+    finally{ setRunning(false); setReady(false); }
+  });
 
-        if (!saveCurrentSetupToProfile()) {
-          log(`❌ Setup nicht vollständig (FZG/KM/Signatur) für: ${drv}`);
-          throw ABORT;
-        }
+  $('#mt_multi_start').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await runMultiDrivers(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'Multi'); }
+    finally{ state.currentDriverName=null; setRunning(false); setReady(false); }
+  });
 
-        await runAuto(token);
+  // Cleaner buttons
+  $('#mt_clean_one_open').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await cleanOneOpenModal(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanOne'); }
+    finally{ setRunning(false); }
+  });
+  $('#mt_clean_page').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await cleanPageForCurrentDriver(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanPage'); }
+    finally{ setRunning(false); }
+  });
+  $('#mt_clean_driver').addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await cleanAllPagesForCurrentDriver(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanDriver'); }
+    finally{ setRunning(false); }
+  });
+}
 
-        log(`🧼 Monat fertig → starte Duplikate-Cleaner (von Anfang): ${drv}`);
-        await cleanAllPagesForCurrentDriver(token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Auto(1)");
-      } finally {
-        state.currentDriverName = null;
-        setRunning(false);
-        setReady(false);
-      }
-    });
+/* ---------------- Init ---------------- */
+state.mode = GM_GetValueSafe(KEYS.mode, 'UPS');
+if(!MODES[state.mode]) state.mode='UPS';
 
-    $("#mt_one_day").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        const drv = state.currentDriverName || getSelectedDriverName();
-        if (!drv || /Alle Auswählen/i.test(drv)) {
-          alert('Bitte einen Fahrer auswählen (nicht "Alle Auswählen").');
-          throw ABORT;
-        }
-        state.currentDriverName = drv;
-        loadProfileToDashboard(drv);
-        await waitForReady(drv, token);
+injectUI();
+applyTheme();
+log('MASTER AutoSuite v3.2.0 geladen ✅');
 
-        const modal = $(".modal.show, .modal.in, .modal.fade.show");
-        if (!modal) {
-          alert("Bitte zuerst einen Tag öffnen (Bearbeiten).");
-          throw ABORT;
-        }
-        const dateStr = state.lastPickedDate || prompt("Datum (DD.MM.YYYY) eingeben:", "");
-        if (!dateStr) throw ABORT;
-
-        await completeDayIfNeeded(modal, dateStr, drv, token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Nur 1 Tag");
-      } finally {
-        state.currentDriverName = null;
-        setRunning(false);
-        setReady(false);
-      }
-    });
-
-    $("#mt_clean_one_open").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        await cleanOneOpen(token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Clean(1 open)");
-      } finally {
-        setRunning(false);
-      }
-    });
-
-    $("#mt_clean_page").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        await cleanPageCurrentDriver(token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Clean(page)");
-      } finally {
-        setRunning(false);
-      }
-    });
-
-    $("#mt_clean_driver").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        await cleanAllPagesForCurrentDriver(token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Clean(driver)");
-      } finally {
-        setRunning(false);
-      }
-    });
-
-    $("#mt_multi_start").addEventListener("click", async () => {
-      if (state.running) return;
-      const token = ++state.runToken;
-      setRunning(true);
-      state.running = true;
-      try {
-        await runMultiDrivers(token);
-      } catch (e) {
-        if (e === ABORT) log("Gestoppt");
-        else logErr(e, "Multi");
-      } finally {
-        state.currentDriverName = null;
-        setRunning(false);
-        setReady(false);
-      }
-    });
-  }
-
-  /* ---------------- Boot ---------------- */
-  (function boot() {
-    const saved = GM_GetValueSafe(KEYS.mode, "UPS");
-    if (MODES[saved]) state.mode = saved;
-    injectUI();
-    log(`✅ AutoSuite geladen — MODE ${state.mode}`);
-  })();
 })();
