@@ -1,4 +1,4 @@
-// AutoSuite CORE v3.3.5 (FIX: Flatpickr Arbeitsbeginn/Arbeitsende write) + keeps ALL original flows/forms
+// AutoSuite CORE v3.3.6 (FIX v2: Flatpickr TIME UI hour/minute + setDate(Date) + events) + keeps ALL original flows/forms
 (function () {
   "use strict";
 
@@ -532,7 +532,7 @@
     $("#mt_fzg").value = prof.fahrzeug || "";
     $("#mt_km").value = formatDashKmDot00(prof.lastKm || "");
     if ($("#mt_ot_min")) $("#mt_ot_min").value = String(prof.otMin ?? 7);
-    if ($("#mt_ot_max")) $("#mt_ot_max").value = String(prof.otMax ?? 9);
+    if ($("#mt_ot_max")) $("#mt_ot_max).value = String(prof.otMax ?? 9);
 
     if (prof.sig?.strokes?.length) {
       dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
@@ -810,71 +810,83 @@
     return modal.querySelector(sel);
   }
 
-  // ✅ FIX: Flatpickr-aware setter (Arbeitsbeginn/Arbeitsende are flatpickr-input)
+  // ✅ FIX v2: Flatpickr TIME UI setter: open -> setDate(Date) -> write hour/min inputs -> events -> close
   function setVal(el, val) {
     if (!el) return false;
 
-    try {
-      el.removeAttribute("readonly");
-    } catch {}
+    try { el.removeAttribute("readonly"); } catch {}
 
     const isFlatpickr = el.classList && el.classList.contains("flatpickr-input") && el._flatpickr;
-
     if (isFlatpickr) {
       const fp = el._flatpickr;
-      // try multiple parse formats (time-only + datetime + date)
-      const formats = ["H:i", "H:i:S", "d.m.Y H:i", "d.m.Y H:i:S", "d.m.Y"];
-      let ok = false;
-      for (const fmt of formats) {
+
+      const m = String(val || "").match(/(\d{1,2}):(\d{2})/);
+      if (m) {
+        let hh = Math.max(0, Math.min(23, parseInt(m[1], 10)));
+        let mm = Math.max(0, Math.min(59, parseInt(m[2], 10)));
+
+        const step = fp?.config?.minuteIncrement ? fp.config.minuteIncrement : 5; // your UI shows step=5
+        mm = Math.round(mm / step) * step;
+        if (mm === 60) { mm = 0; hh = (hh + 1) % 24; }
+
+        try { fp.open(); } catch {}
+
         try {
-          fp.setDate(val, true, fmt); // triggerChange=true
-          ok = true;
-          break;
-        } catch {}
+          const base = (fp.selectedDates && fp.selectedDates[0]) ? new Date(fp.selectedDates[0]) : new Date();
+          base.setHours(hh, mm, 0, 0);
+
+          // 1) primary: setDate(Date)
+          fp.setDate(base, true);
+
+          // 2) also set internal time inputs (some integrations read these)
+          const hourInput = fp.timeContainer?.querySelector("input.flatpickr-hour");
+          const minInput  = fp.timeContainer?.querySelector("input.flatpickr-minute");
+          if (hourInput) {
+            hourInput.value = String(hh).padStart(2, "0");
+            hourInput.dispatchEvent(new Event("input", { bubbles: true }));
+            hourInput.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          if (minInput) {
+            minInput.value = String(mm).padStart(2, "0");
+            minInput.dispatchEvent(new Event("input", { bubbles: true }));
+            minInput.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+
+          // 3) sync visible input + events
+          el.value = String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
+          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+          try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+          try { el.dispatchEvent(new Event("blur", { bubbles: true })); } catch {}
+
+          try { fp.close(); } catch {}
+          return true;
+        } catch {
+          try { el.value = val; } catch {}
+          try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+          try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+          try { fp.close(); } catch {}
+          return true;
+        }
       }
-      if (!ok) {
-        try {
-          el.value = val;
-        } catch {}
-        try {
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-        } catch {}
-        try {
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        } catch {}
-      }
-      try {
-        el.blur();
-      } catch {}
+
+      // not time string: fallback
+      try { fp.open(); } catch {}
+      try { fp.setDate(val, true); } catch {}
+      try { fp.close(); } catch {}
+      try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
       return true;
     }
 
-    // normal inputs: native setter (framework-safe)
+    // normal inputs: native setter
     const proto = Object.getPrototypeOf(el);
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
     const setter = desc && desc.set ? desc.set : null;
 
-    try {
-      el.focus();
-    } catch {}
-
-    try {
-      if (setter) setter.call(el, val);
-      else el.value = val;
-    } catch {
-      el.value = val;
-    }
-
-    try {
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-    } catch {}
-    try {
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    } catch {}
-    try {
-      el.dispatchEvent(new Event("blur", { bubbles: true }));
-    } catch {}
-
+    try { el.focus(); } catch {}
+    try { if (setter) setter.call(el, val); else el.value = val; } catch { el.value = val; }
+    try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
+    try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
+    try { el.dispatchEvent(new Event("blur", { bubbles: true })); } catch {}
     return true;
   }
 
@@ -1316,25 +1328,19 @@
       setDashKmDot00FromInt(endInt);
       log(`Übersprungen (vollständig): ${dateStr} — End-KM übernommen: ${endInt}`);
     } else {
-      // ✅ FIX: Always set both Arbeitsbeginn + Arbeitsende via flatpickr-aware setVal
-      if (!status.hasStart) {
-        const ab = q(modal, "#start");
-        if (ab) {
-          setVal(ab, toTimeStr(plan.start));
-          await cancellableSleep(250, token);
-        } else {
-          log("❌ Arbeitsbeginn Feld (#start) nicht gefunden");
-        }
-      }
-      if (!status.hasEnd) {
-        const ae = q(modal, "#end");
-        if (ae) {
-          setVal(ae, toTimeStr(plan.end));
-          await cancellableSleep(250, token);
-        } else {
-          log("❌ Arbeitsende Feld (#end) nicht gefunden");
-        }
-      }
+      // ✅ ALWAYS set Arbeitsbeginn + Arbeitsende using setVal (flatpickr time UI safe)
+      const ab = q(modal, "#start");
+      const ae = q(modal, "#end");
+
+      if (ab) {
+        setVal(ab, toTimeStr(plan.start));
+        await cancellableSleep(350, token);
+      } else log("❌ Arbeitsbeginn Feld (#start) nicht gefunden");
+
+      if (ae) {
+        setVal(ae, toTimeStr(plan.end));
+        await cancellableSleep(350, token);
+      } else log("❌ Arbeitsende Feld (#end) nicht gefunden");
 
       // re-check after set
       status = getDayStatus(modal);
