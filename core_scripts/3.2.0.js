@@ -272,6 +272,7 @@
       await cancellableSleep(40, token);
     }
 
+    // extra draw fallback
     try {
       const ctx = sigCanvas.getContext("2d");
       ctx.lineWidth = 2;
@@ -281,9 +282,7 @@
         if (!stroke || stroke.length < 2) continue;
         ctx.beginPath();
         ctx.moveTo(stroke[0].x * sigCanvas.width, stroke[0].y * sigCanvas.height);
-        for (let i = 1; i < stroke.length; i++) {
-          ctx.lineTo(stroke[i].x * sigCanvas.width, stroke[i].y * sigCanvas.height);
-        }
+        for (let i = 1; i < stroke.length; i++) ctx.lineTo(stroke[i].x * sigCanvas.width, stroke[i].y * sigCanvas.height);
         ctx.stroke();
       }
     } catch {}
@@ -529,10 +528,16 @@
     const profiles = loadProfiles();
     const prof = profiles[profileKey(name)];
     if (!prof) return false;
-    $("#mt_fzg").value = prof.fahrzeug || "";
-    $("#mt_km").value = formatDashKmDot00(prof.lastKm || "");
-    if ($("#mt_ot_min")) $("#mt_ot_min").value = String(prof.otMin ?? 7);
-    if ($("#mt_ot_max")) $("#mt_ot_max).value = String(prof.otMax ?? 9);
+
+    const fzgEl = $("#mt_fzg");
+    const kmEl = $("#mt_km");
+    const otMinEl = $("#mt_ot_min");
+    const otMaxEl = $("#mt_ot_max");
+
+    if (fzgEl) fzgEl.value = prof.fahrzeug || "";
+    if (kmEl) kmEl.value = formatDashKmDot00(prof.lastKm || "");
+    if (otMinEl) otMinEl.value = String(prof.otMin ?? 7);
+    if (otMaxEl) otMaxEl.value = String(prof.otMax ?? 9);
 
     if (prof.sig?.strokes?.length) {
       dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
@@ -810,11 +815,13 @@
     return modal.querySelector(sel);
   }
 
-  // ✅ FIX v2: Flatpickr TIME UI setter: open -> setDate(Date) -> write hour/min inputs -> events -> close
+  // ✅ FIX: Flatpickr TIME UI setter: open -> setDate(Date) -> set hour/min inputs -> events -> close
   function setVal(el, val) {
     if (!el) return false;
 
-    try { el.removeAttribute("readonly"); } catch {}
+    try {
+      el.removeAttribute("readonly");
+    } catch {}
 
     const isFlatpickr = el.classList && el.classList.contains("flatpickr-input") && el._flatpickr;
     if (isFlatpickr) {
@@ -825,22 +832,28 @@
         let hh = Math.max(0, Math.min(23, parseInt(m[1], 10)));
         let mm = Math.max(0, Math.min(59, parseInt(m[2], 10)));
 
-        const step = fp?.config?.minuteIncrement ? fp.config.minuteIncrement : 5; // your UI shows step=5
+        const step = fp?.config?.minuteIncrement ? fp.config.minuteIncrement : 5; // you have step=5
         mm = Math.round(mm / step) * step;
-        if (mm === 60) { mm = 0; hh = (hh + 1) % 24; }
-
-        try { fp.open(); } catch {}
+        if (mm === 60) {
+          mm = 0;
+          hh = (hh + 1) % 24;
+        }
 
         try {
-          const base = (fp.selectedDates && fp.selectedDates[0]) ? new Date(fp.selectedDates[0]) : new Date();
+          fp.open();
+        } catch {}
+
+        try {
+          const base = fp.selectedDates && fp.selectedDates[0] ? new Date(fp.selectedDates[0]) : new Date();
           base.setHours(hh, mm, 0, 0);
 
-          // 1) primary: setDate(Date)
+          // 1) main
           fp.setDate(base, true);
 
-          // 2) also set internal time inputs (some integrations read these)
+          // 2) internal time inputs
           const hourInput = fp.timeContainer?.querySelector("input.flatpickr-hour");
-          const minInput  = fp.timeContainer?.querySelector("input.flatpickr-minute");
+          const minInput = fp.timeContainer?.querySelector("input.flatpickr-minute");
+
           if (hourInput) {
             hourInput.value = String(hh).padStart(2, "0");
             hourInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -852,13 +865,15 @@
             minInput.dispatchEvent(new Event("change", { bubbles: true }));
           }
 
-          // 3) sync visible input + events
+          // 3) visible input + events
           el.value = String(hh).padStart(2, "0") + ":" + String(mm).padStart(2, "0");
           try { el.dispatchEvent(new Event("input", { bubbles: true })); } catch {}
           try { el.dispatchEvent(new Event("change", { bubbles: true })); } catch {}
           try { el.dispatchEvent(new Event("blur", { bubbles: true })); } catch {}
 
-          try { fp.close(); } catch {}
+          try {
+            fp.close();
+          } catch {}
           return true;
         } catch {
           try { el.value = val; } catch {}
@@ -869,7 +884,7 @@
         }
       }
 
-      // not time string: fallback
+      // not time format
       try { fp.open(); } catch {}
       try { fp.setDate(val, true); } catch {}
       try { fp.close(); } catch {}
@@ -877,7 +892,7 @@
       return true;
     }
 
-    // normal inputs: native setter
+    // normal input
     const proto = Object.getPrototypeOf(el);
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
     const setter = desc && desc.set ? desc.set : null;
@@ -916,7 +931,7 @@
     const ruDur = plan?.ru?.end != null && plan?.ru?.start != null ? plan.ru.end - plan.ru.start : 0;
     return plan.end - plan.start - ruDur;
   }
-  // IMPORTANT RULE: if (end-start) >= 9:00h => RP must be 45–50 min
+  // RULE: if (end-start) >= 9h => RP must be 45–50 min
   function pickRuDurByRule(durMins, baseMin, baseMax) {
     if (durMins >= 540) return randInt(45, 50);
     return randInt(baseMin, baseMax);
@@ -1055,8 +1070,7 @@
       }
     }
 
-    const finalNet = Object.values(plans).reduce((a, p) => a + calcNetMinsFromPlan(p), 0);
-    return { plans, baseNet, overtimeTarget, targetNet, finalNet };
+    return { plans, baseNet, overtimeTarget, targetNet };
   }
 
   /* ---------------- Plan generators (RP 9h rule included) ---------------- */
@@ -1310,7 +1324,7 @@
     }
   }
 
-  /* ---------------- Core day completion (FIXED start/end) ---------------- */
+  /* ---------------- Core day completion ---------------- */
   async function completeDayIfNeeded(modal, dateStr, driver, token) {
     requireToken(token);
 
@@ -1328,7 +1342,7 @@
       setDashKmDot00FromInt(endInt);
       log(`Übersprungen (vollständig): ${dateStr} — End-KM übernommen: ${endInt}`);
     } else {
-      // ✅ ALWAYS set Arbeitsbeginn + Arbeitsende using setVal (flatpickr time UI safe)
+      // ALWAYS set Arbeitsbeginn + Arbeitsende using setVal (flatpickr time UI safe)
       const ab = q(modal, "#start");
       const ae = q(modal, "#end");
 
@@ -1342,7 +1356,6 @@
         await cancellableSleep(350, token);
       } else log("❌ Arbeitsende Feld (#end) nicht gefunden");
 
-      // re-check after set
       status = getDayStatus(modal);
 
       if (!status.hasVehicleRow) {
@@ -1439,14 +1452,11 @@
       log(`✅ ${driver}: ${dateStr} — Start ${toTimeStr(plan.start)} End ${toTimeStr(plan.end)} | RP ${plan.ru.end - plan.ru.start}min (Regel ok)`);
     }
 
-    // Always push signature into modal before finishing correction
     await replaySignatureIntoModal(modal, token);
     await cancellableSleep(200, token);
 
-    // Click "Korrektur beenden"
     await clickKorrekturBeenden(modal, token);
 
-    // Fallback close
     await cancellableSleep(450, token);
     q(modal, "button[data-dismiss='modal'], .modal-footer .btn-secondary, .close, button.close")?.click();
   }
@@ -1569,9 +1579,7 @@
   async function deletePauseRow(rowObj, token) {
     const btn = rowObj?.del;
     if (!btn) return false;
-    try {
-      btn.scrollIntoView({ block: "center" });
-    } catch {}
+    try { btn.scrollIntoView({ block: "center" }); } catch {}
     await cancellableSleep(80, token);
     btn.click();
     await cancellableSleep(700, token);
