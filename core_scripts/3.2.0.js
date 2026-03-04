@@ -264,6 +264,19 @@ function injectUI(){
         <button class="mt-btn primary" id="mt_clean_driver">Duplikate (ganzer Fahrer)</button>
       </div>
 
+
+      <div style="font-weight:900;margin:10px 0 6px;">Überstunden hinzufügen (separat vom Ziel oben)</div>
+      <div class="mt-row">
+        <div class="mt-field" style="flex:1;min-width:140px">
+          <label>Std</label>
+          <input id="mt_ot_add_hours" type="number" step="0.25" min="0" placeholder="z.B. 1 oder 5">
+        </div>
+      </div>
+      <div class="mt-row">
+        <button class="mt-btn primary" id="mt_ot_add_one_open">Überstunden (Nur 1 Tag, Modal offen)</button>
+        <button class="mt-btn primary" id="mt_ot_add_month">Überstunden (1 Monat, ganzer Fahrer)</button>
+      </div>
+
       <div style="font-weight:900;margin:10px 0 6px;">Multi Driver (Liste unten)</div>
       <div class="mt-field">
         <label>Fahrer-Liste (eine Zeile pro Fahrer)</label>
@@ -528,16 +541,26 @@ function genPlanByMode(dateStr, extraMins=0){
   extraMins = Math.max(0, Math.floor(extraMins||0));
   if(extraMins<=0) return plan;
 
-  // Extend Arbeitsende to create Überstunden (UPS/GLS). DPD is intentionally not extended
-  // because its rules are much stricter (duration tied to start).
-  if(state.mode==='DPD') return plan;
+  // Extend Arbeitsende to create Überstunden (ALL MODES incl. DPD).
+  // NOTE: DPD has stricter base rules, but overtime is allowed when user sets monthly target
+  // or uses the manual overtime buttons. We still apply a hard cap per mode to avoid crazy times.
 
   const capEnd = getHardEndCapByMode(dateStr, plan.start);
   if(capEnd==null) return plan;
 
-  const newEnd = Math.min(capEnd, plan.end + extraMins);
+  // extraMins here represent *paid overtime minutes* (working time beyond the daily norm).
+  // If working time exceeds 9h, break should be 45min instead of 30min (Austrian rule of thumb).
+  const breakExtra = (extraMins > 60) ? 15 : 0; // +15 min to go from 30->45
+  const totalAdd = extraMins + breakExtra;
+
+  const newEnd = Math.min(capEnd, plan.end + totalAdd);
   const delta = newEnd - plan.end;
   if(delta<=0) return plan;
+
+  // If break increases, extend the Ruhepause block (RP) a bit so total break becomes 45.
+  if(breakExtra>0 && plan.ru && typeof plan.ru.end==='number'){
+    plan.ru.end = Math.min(plan.ru.end + breakExtra, newEnd - 10);
+  }
 
   plan.end = newEnd;
   plan.so3.end = newEnd;
@@ -549,12 +572,28 @@ function genPlanByMode(dateStr, extraMins=0){
 function getHardEndCapByMode(dateStr, startMins){
   const d = deDateStrToDate(dateStr);
   const wd = d.getDay();
+
+  // GLS
   if(state.mode==='GLS') return timeStrToMins('15:45');
+
   // UPS
   if(state.mode==='UPS'){
-    if(wd===2 || wd===3) return timeStrToMins('16:15');
+    if(wd===2 || wd===3) return timeStrToMins('16:15'); // Tue/Wed
     return timeStrToMins('16:00');
   }
+
+  // DPD (allow overtime, but keep it sane)
+  if(state.mode==='DPD'){
+    // Absolute latest varies a bit by weekday, but we also cap by "max 10h from start".
+    let abs;
+    if(wd===1) abs = timeStrToMins('15:30');          // Monday
+    else if(wd===2 || wd===3) abs = timeStrToMins('16:00'); // Tue/Wed
+    else if(wd===4 || wd===5) abs = timeStrToMins('15:00'); // Thu/Fri
+    else abs = timeStrToMins('16:00');
+    const maxFromStart = (startMins!=null) ? (startMins + 600) : abs; // +10h
+    return Math.min(abs, maxFromStart);
+  }
+
   return null;
 }
 
@@ -617,6 +656,254 @@ function buildOvertimePlanForPage(dateList, otMinH, otMaxH){
     log(`🧮 Überstunden-Plan: Ziel ${Math.round(targetMins/60*10)/10}h (${targetMins} min), verteilt auf ${plan.size} Tage.`);
   }
   return plan;
+
+
+/* ---------------- Manual overtime add (separate from monthly target) ---------------- */
+function buildFixedOvertimePlan(dateList, totalMins){
+  const plan=new Map();
+  totalMins = Math.max(0, Math.floor(totalMins||0));
+  if(totalMins<=0) return plan;
+
+  // Eligible: Mon–Fri only
+  const eligible = dateList.filter(ds=>{
+    const d=deDateStrToDate(ds); const wd=d.getDay();
+    return wd>=1 && wd<=5;
+  });
+  if(!eligible.length) return plan;
+
+  let remaining = totalMins;
+  const chunk = 15;             // 15-min steps
+  const perDayMax = 120;         // keep manual add modest by default
+
+  const dates = shuffle(eligible);
+  const give = (ds, mins)=>{
+    const cur=plan.get(ds)||0;
+    plan.set(ds, cur+mins);
+  };
+
+  let safety=2000;
+  while(remaining>0 && safety-- > 0){
+    let progressed=false;
+    for(const ds of dates){
+      if(remaining<=0) break;
+      const cur=plan.get(ds)||0;
+      const room = perDayMax - cur;
+      if(room<=0) continue;
+      const maxGive = Math.min(room, remaining);
+      const steps = Math.max(1, Math.floor(maxGive/chunk));
+      const stepGive = Math.min(maxGive, chunk*randInt(1, steps));
+      give(ds, stepGive);
+      remaining -= stepGive;
+      progressed=true;
+    }
+    if(!progressed) break;
+  }
+
+  if(remaining>0){
+    log(`⚠️ Extra-Überstunden zu hoch: Rest ${remaining} min nicht platzierbar (pro Tag max ${perDayMax} min).`);
+  } else {
+    const total = Array.from(plan.values()).reduce((a,b)=>a+b,0);
+    log(`🧮 Extra-Überstunden Plan: ${Math.round(total/60*10)/10}h (${total} min) verteilt auf ${plan.size} Tage.`);
+  }
+  return plan;
+}
+
+function getDateStrFromModal(modal){
+  let dateStr=(q(modal,'#end_date')?.value||q(modal,'#start_date')?.value||'').trim();
+  if(!/^\d{2}\.\d{2}\.\d{4}$/.test(dateStr)){
+    const m=(modal.textContent||'').match(/\b\d{2}\.\d{2}\.\d{4}\b/);
+    dateStr=m?m[0]:'';
+  }
+  return dateStr;
+}
+
+function getStartMinsFromModal(modal){
+  const s=(q(modal,'#start')?.value||'').trim();
+  return timeStrToMins(s);
+}
+
+function getEndMinsFromModal(modal){
+  const e=(q(modal,'#end')?.value||'').trim();
+  return timeStrToMins(e);
+}
+
+async function deletePauseRowByObj(rowObj, token){
+  // rowObj format from readPauseRows(): {tr,start,end,rawType,kind,del}
+  const btn=rowObj?.del; if(!btn) return false;
+  try{btn.scrollIntoView({block:'center'});}catch{}
+  await cancellableSleep(80, token);
+  btn.click();
+  await cancellableSleep(700, token);
+  const t0=Date.now();
+  while(Date.now()-t0<6000){
+    const confirm=$(CLEAN_CFG.swalConfirmSel);
+    if(confirm){ confirm.click(); await cancellableSleep(800, token); break; }
+    await cancellableSleep(150, token);
+  }
+  await cancellableSleep(650, token);
+  return true;
+}
+
+async function applyExtraOvertimeToOpenModal(modal, extraMins, token){
+  extraMins = Math.max(0, Math.floor(extraMins||0));
+  if(extraMins<=0){ log('⚠️ Extra-Überstunden: 0'); return; }
+
+  const dateStr = getDateStrFromModal(modal);
+  if(!dateStr){ log('Datum im Modal nicht gefunden'); throw ABORT; }
+
+  const startM = getStartMinsFromModal(modal);
+  const endM   = getEndMinsFromModal(modal);
+  if(startM==null || endM==null){
+    log('⚠️ Kann Start/Ende im Modal nicht lesen (bitte sicherstellen, dass Arbeitsbeginn/Arbeitsende gesetzt sind).');
+    throw ABORT;
+  }
+
+  const cap = getHardEndCapByMode(dateStr, startM);
+  const wanted = endM + extraMins;
+  const newEnd = (cap!=null) ? Math.min(cap, wanted) : wanted;
+  const delta  = newEnd - endM;
+  if(delta<=0){ log('⚠️ Extra-Überstunden: keine Verlängerung möglich (Cap erreicht).'); return; }
+
+  // Update Arbeitsende
+  setVal(q(modal,'#end'), toTimeStr(newEnd));
+  await cancellableSleep(DELAYS.step, token);
+
+  // Update Lenkende (vehicle_end) + save vehicle update
+  const pencil=q(modal,'#vehicle_dataList_body .fa-pencil, #vehicle_dataList_body .fa-pencil-alt, #vehicle_dataList_body .fas.fa-pencil-alt, #vehicle_dataList_body a.text-success');
+  if(pencil){pencil.closest('a,button')?.click();await cancellableSleep(DELAYS.ajax,token);}
+  const vEnd=q(modal,'#vehicle_end')||q(modal,'input[placeholder="Lenkende"]');
+  if(vEnd){ setVal(vEnd,toTimeStr(newEnd)); await cancellableSleep(DELAYS.step,token); }
+  q(modal,'#btn_vehicle_update')?.click();
+  await cancellableSleep(DELAYS.ajax,token);
+
+  // Update SO3: remove the last SO (latest end), then add a new SO3 ending at newEnd
+  try{
+    const rows=readPauseRows(modal);
+    const soRows = rows.filter(r=>r.kind==='SO').map(r=>{
+      const s=timeStrToMins(r.start), e=timeStrToMins(r.end);
+      return {...r, s, e};
+    }).filter(r=>r.s!=null && r.e!=null);
+
+    if(soRows.length){
+      const last = soRows.sort((a,b)=> (b.e-a.e))[0];
+      await deletePauseRowByObj(last, token);
+      await cancellableSleep(DELAYS.ajax, token);
+    }
+
+    const so3Start = Math.max(0, newEnd - randInt(15,20));
+    await addPause(modal, 2, toTimeStr(so3Start), toTimeStr(newEnd), token);
+  }catch(e){
+    log('⚠️ SO3 konnte nicht sauber angepasst werden (Arbeitsende/Lenkende wurden aber gesetzt).');
+  }
+
+  log(`✅ Extra-Überstunden hinzugefügt: +${delta} min (${toTimeStr(endM)} → ${toTimeStr(newEnd)})`);
+}
+
+async function addOvertimeOneDayOpenModal(token){
+  const modal=await waitForModal(token);
+  if(!modal || !modal.classList.contains('show')){ log('Bitte zuerst einen Tag öffnen (Bearbeiten).'); throw ABORT; }
+  const h=parseOtHours($('#mt_ot_add_hours')?.value);
+  const extraMins=Math.round(h*60);
+  await cancellableSleep(600, token);
+  await applyExtraOvertimeToOpenModal(modal, extraMins, token);
+
+  // Save
+  await clickKorrekturBeenden(modal, token);
+  const yes=await waitForSwalConfirm(token); if(yes) yes.click();
+  await waitForModalClosed(token);
+  await cancellableSleep(DELAYS.afterClose, token);
+}
+
+async function collectAllDatesAcrossPages(token){
+  const all=[];
+  let page=1;
+  // Go to first page if possible
+  const goFirst = ()=>{
+    const a = $('a.page-link[data-dt-idx="1"]') || $$('.page-link').find(x=> (x.textContent||'').trim()==='1');
+    if(a){ a.click(); return true; }
+    return false;
+  };
+  goFirst();
+  await cancellableSleep(DELAYS.pageTurn, token);
+
+  while(true){
+    requireToken(token);
+    const table=findTimeTable(); if(!table) break;
+    const tbody=table.tBodies[0]||table.querySelector('tbody'); if(!tbody) break;
+    const rows=Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td'));
+    const dates=Array.from(new Set(rows.map(r=>getRowDate(r)).filter(Boolean)));
+    for(const d of dates) all.push(d);
+
+    const next=findNextLink();
+    if(!next) break;
+    const firstRowBefore=$('#data_table tbody tr');
+    const firstDateBefore=(firstRowBefore?.querySelector('td.sorting_1')?.textContent||'').trim();
+    next.click();
+    await cancellableSleep(DELAYS.pageTurn, token);
+    await waitForTableRedraw(firstDateBefore, token);
+    page++;
+  }
+  return Array.from(new Set(all));
+}
+
+async function addOvertimeWholeMonth(token){
+  const h=parseOtHours($('#mt_ot_add_hours')?.value);
+  const totalMins=Math.round(h*60);
+  if(totalMins<=0){ alert('Bitte Std eingeben (z.B. 5).'); throw ABORT; }
+
+  // Build distribution across ALL pages (whole month/driver)
+  log('📅 Sammle alle Datumseinträge (ganzer Fahrer)…');
+  const dates = await collectAllDatesAcrossPages(token);
+  if(!dates.length){ log('Keine Daten gefunden.'); throw ABORT; }
+
+  const dist = buildFixedOvertimePlan(dates, totalMins);
+
+  // Back to first page
+  const a = $('a.page-link[data-dt-idx="1"]') || $$('.page-link').find(x=> (x.textContent||'').trim()==='1');
+  if(a){ a.click(); await cancellableSleep(DELAYS.pageTurn, token); }
+
+  let page=1;
+  while(true){
+    requireToken(token);
+    log(`⏱ Extra-Überstunden anwenden: Seite ${page}…`);
+    const table=findTimeTable(); if(!table) break;
+    const tbody=table.tBodies[0]||table.querySelector('tbody'); if(!tbody) break;
+    const rows=Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td'));
+    const processed=new Set();
+
+    for(const tr of rows){
+      requireToken(token);
+      const dateStr=getRowDate(tr); if(!dateStr || processed.has(dateStr)) continue;
+      const mins = dist.get(dateStr) || 0;
+      if(mins<=0){ processed.add(dateStr); continue; }
+
+      const btn=findEditButton(tr); if(!btn){ processed.add(dateStr); continue; }
+      btn.click();
+      const modal=await waitForModal(token); if(!modal){ processed.add(dateStr); continue; }
+      await cancellableSleep(DELAYS.openWait, token);
+
+      await applyExtraOvertimeToOpenModal(modal, mins, token);
+
+      await clickKorrekturBeenden(modal, token);
+      const yes=await waitForSwalConfirm(token); if(yes) yes.click();
+      await waitForModalClosed(token);
+      await cancellableSleep(DELAYS.afterClose, token);
+
+      processed.add(dateStr);
+    }
+
+    const next=findNextLink();
+    if(!next) break;
+    const firstRowBefore=$('#data_table tbody tr');
+    const firstDateBefore=(firstRowBefore?.querySelector('td.sorting_1')?.textContent||'').trim();
+    next.click();
+    await cancellableSleep(DELAYS.pageTurn, token);
+    await waitForTableRedraw(firstDateBefore, token);
+    page++;
+  }
+
+  log('✅ Extra-Überstunden (Monat) fertig.');
+}
 }
 
 
@@ -833,24 +1120,95 @@ function findEditButton(tr){
       || tr.querySelector('a .fa-pencil, a .fa-pencil-alt, a .fas.fa-pencil-alt, a.text-success, button .fa-pencil, button .fa-pencil-alt')?.closest('a,button');
 }
 
-/* ---------------- Auto loop (CURRENT PAGE ONLY) ---------------- */
+/* ---------------- Auto loop (ALL PAGES / WHOLE MONTH) ---------------- */
 async function runAuto(token){
   state.processedDates.clear();
   state.lastPickedDate=null;
-  log(`▶️ Auto gestartet (nur aktuelle Seite) — MODE ${state.mode}`);
 
-  // Build Überstunden plan for this page (per driver profile)
-  try{
-    const drv = state.currentDriverName || getSelectedDriverName();
-    const profiles=loadProfiles();
-    const prof=profiles[profileKey(drv||'')]||{};
+  const driver = state.currentDriverName || getSelectedDriverName() || '(Unbekannt)';
+  log(`▶️ Auto gestartet (ganzer Monat / alle Seiten) — MODE ${state.mode} — Fahrer: ${driver}`);
+
+  // Load driver profile (contains Fahrzeug/KM/Signature + Überstunden Ziel)
+  const profiles=loadProfiles();
+  const prof=profiles[profileKey(driver)]||{};
+
+  // Helpers to collect dates across pagination (same visible month)
+  const getPageDates = ()=>{
     const table=findTimeTable();
     const tbody=table?.tBodies?.[0] || table?.querySelector?.('tbody');
     const rows=tbody? Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td')) : [];
-    const dates=Array.from(new Set(rows.map(r=>getRowDate(r)).filter(Boolean)));
-    state.otPlan = buildOvertimePlanForPage(dates, prof.otMin, prof.otMax);
-  }catch(e){ state.otPlan = new Map(); }
+    return Array.from(new Set(rows.map(r=>getRowDate(r)).filter(Boolean)));
+  };
+  const monthKey = (ds)=>{
+    const d=deDateStrToDate(ds);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+  };
+  const findFirstPageLink = ()=>{
+    // DataTables uses dt-idx: "first" or "1"
+    let a = $('a.page-link[aria-controls="data_table"][data-dt-idx="first"]');
+    if(a){ const li=a.closest('li'); if(!li||!li.classList.contains('disabled')) return a; }
+    a = $('a.page-link[aria-controls="data_table"][data-dt-idx="1"]');
+    if(a){ return a; }
+    // Fallback by text "1"
+    const candidates = $$('#data_table_paginate a.page-link');
+    for(const link of candidates){
+      if((link.textContent||'').trim()==='1') return link;
+    }
+    return null;
+  };
 
+  // Collect ALL dates for the month by walking pages once (no modals).
+  let allDates=[];
+  let mk=null;
+  try{
+    const firstPageDates=getPageDates();
+    mk = firstPageDates.length ? monthKey(firstPageDates[0]) : null;
+    allDates.push(...firstPageDates);
+
+    while(true){
+      requireToken(token);
+      const next=findNextLink();
+      if(!next) break;
+
+      const firstRow=$('#data_table tbody tr');
+      const prevFirstDateText = firstRow ? (firstRow.textContent||'').trim().slice(0,20) : '';
+      next.click();
+      await cancellableSleep(DELAYS.pageTurn, token);
+      await waitForTableRedraw(prevFirstDateText, token);
+
+      const pageDates=getPageDates();
+      if(!pageDates.length) break;
+      if(mk && monthKey(pageDates[0])!==mk){
+        // month changed -> stop
+        break;
+      }
+      allDates.push(...pageDates);
+    }
+
+    allDates = Array.from(new Set(allDates));
+
+    // Return to first page so we can process month from start
+    const firstLink=findFirstPageLink();
+    if(firstLink){
+      const firstRow=$('#data_table tbody tr');
+      const prevFirstDateText = firstRow ? (firstRow.textContent||'').trim().slice(0,20) : '';
+      firstLink.click();
+      await cancellableSleep(DELAYS.pageTurn, token);
+      await waitForTableRedraw(prevFirstDateText, token);
+    }
+  }catch(e){
+    // If collecting fails, fallback to current page only
+    allDates = getPageDates();
+  }
+
+  // Build monthly overtime plan (paid overtime minutes per day) using the provided range.
+  try{
+    state.otPlan = buildOvertimePlanForPage(allDates, prof.otMin, prof.otMax);
+  }catch(e){
+    state.otPlan = new Map();
+  }
+
+  // Process all pages (the same way duplikate-all-pages does), applying otPlan per date.
   while(true){
     requireToken(token);
     const table=findTimeTable();
@@ -858,33 +1216,49 @@ async function runAuto(token){
     const tbody=table.tBodies && table.tBodies[0] ? table.tBodies[0] : table.querySelector('tbody');
     if(!tbody){log('Kein tbody.');break;}
     const rows=Array.from(tbody.querySelectorAll('tr')).filter(r=>r.querySelector('td'));
-    let picked=null,pickedDate=null;
+
+    // process each unprocessed row on this page
+    let didOne=false;
     for(const tr of rows){
+      requireToken(token);
       const dateStr=getRowDate(tr);
       if(!dateStr) continue;
-      if(state.processedDates.has(dateStr) || state.lastPickedDate===dateStr) continue;
+      if(mk && monthKey(dateStr)!==mk) continue; // safety: only current month
+      if(state.processedDates.has(dateStr)) continue;
+
       const btn=findEditButton(tr);
       if(!btn){ state.processedDates.add(dateStr); continue; }
-      picked=tr; pickedDate=dateStr; break;
+
+      didOne=true;
+      state.lastPickedDate=dateStr;
+
+      btn.click();
+      const modal=await waitForModal(token);
+      if(!modal){ log(`Modal nicht geöffnet: ${dateStr}`); state.processedDates.add(dateStr); continue; }
+      await cancellableSleep(DELAYS.openWait,token);
+
+      await completeDayIfNeeded(modal,dateStr,driver,token);
+
+      await waitForModalClosed(token);
+      await cancellableSleep(DELAYS.afterClose, token);
+
+      state.processedDates.add(dateStr);
     }
-    if(!picked){ log('🏁 Diese Seite fertig.'); break; }
 
-    state.lastPickedDate=pickedDate;
-    const driver = state.currentDriverName || getSelectedDriverName() || '(Unbekannt)';
-    findEditButton(picked).click();
+    // page done
+    if(!didOne) log('✅ Seite fertig.');
 
-    const modal=await waitForModal(token);
-    if(!modal){ log(`Modal nicht geöffnet: ${pickedDate}`); state.processedDates.add(pickedDate); state.lastPickedDate=null; continue; }
-    await cancellableSleep(DELAYS.openWait,token);
+    const next=findNextLink();
+    if(!next) break;
 
-    await completeDayIfNeeded(modal,pickedDate,driver,token);
-
-    await waitForModalClosed(token);
-    await cancellableSleep(DELAYS.afterClose,token);
-
-    state.processedDates.add(pickedDate);
-    state.lastPickedDate=null;
+    const firstRow=$('#data_table tbody tr');
+    const prevFirstDateText = firstRow ? (firstRow.textContent||'').trim().slice(0,20) : '';
+    next.click();
+    await cancellableSleep(DELAYS.pageTurn, token);
+    await waitForTableRedraw(prevFirstDateText, token);
   }
+
+  log('🏁 Monat fertig (alle Seiten).');
 }
 
 /* ---------------- Duplicate pause cleaner (SO/RP) ---------------- */
@@ -1142,6 +1516,24 @@ function wireButtons(){
     const token=++state.runToken; setRunning(true);
     try{ await cleanAllPagesForCurrentDriver(token); }
     catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanDriver'); }
+    finally{ setRunning(false); }
+  });
+
+
+  // Manual overtime add (separate from Ziel oben)
+  $('#mt_ot_add_one_open')?.addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await addOvertimeOneDayOpenModal(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+OneDay'); }
+    finally{ setRunning(false); }
+  });
+
+  $('#mt_ot_add_month')?.addEventListener('click', async ()=>{
+    if(state.running) return;
+    const token=++state.runToken; setRunning(true);
+    try{ await addOvertimeWholeMonth(token); }
+    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+Month'); }
     finally{ setRunning(false); }
   });
 }
