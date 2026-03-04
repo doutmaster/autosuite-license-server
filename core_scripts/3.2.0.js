@@ -1538,6 +1538,56 @@ function wireButtons(){
 
 
 
+/* ---------------- Page-Bridge for legacy inline handlers ---------------- */
+try{
+  const BRIDGE = "MT_AUTOSUITE_BRIDGE_V1";
+
+  // 1) Listen for bridge messages from page-context functions
+  if(!window.__mtAutosuiteBridgeInstalled){
+    window.__mtAutosuiteBridgeInstalled = true;
+
+    window.addEventListener("message", async (ev)=>{
+      try{
+        if(ev.source !== window) return;
+        const d = ev.data;
+        if(!d || d.__mt !== BRIDGE || !d.cmd) return;
+
+        if(state.running){ log("⏳ Läuft bereits…"); return; }
+
+        const token = ++state.runToken;
+        setRunning(true);
+        try{
+          if(d.cmd === "OT_ONE_DAY"){
+            await addOvertimeOneDayOpenModal(token);
+          }else if(d.cmd === "OT_MONTH"){
+            await addOvertimeWholeMonth(token);
+          }
+        }catch(e){
+          if(e===ABORT) log("Gestoppt");
+          else logErr(e, d.cmd==="OT_ONE_DAY" ? "OT+OneDay" : "OT+Month");
+        }finally{
+          setRunning(false);
+        }
+      }catch(_){}
+    });
+
+    // 2) Inject page-context wrappers so even old inline/eval handlers can call them
+    const s = document.createElement("script");
+    s.textContent = `(() => {
+      const BRIDGE = "${BRIDGE}";
+      // Legacy names expected by older UI versions / eval contexts
+      window.addOvertimeOneDayOpenModal = function(){
+        window.postMessage({__mt: BRIDGE, cmd: "OT_ONE_DAY"}, "*");
+      };
+      window.addOvertimeWholeMonth = function(){
+        window.postMessage({__mt: BRIDGE, cmd: "OT_MONTH"}, "*");
+      };
+    })();`;
+    document.documentElement.appendChild(s);
+    s.remove();
+  }
+}catch(e){}
+
 /* ---------------- Expose manual OT helpers (safety) ---------------- */
 try{
   const PAGE = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
