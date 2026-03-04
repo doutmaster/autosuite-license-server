@@ -1543,13 +1543,9 @@ function wireButtons(){
 /* ---------------- Expose manual OT helpers (loader-safe) ---------------- */
 try{
   const GT = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : this);
-  // Export on global object so loader/inline contexts can call them reliably
-  GT.addOvertimeOneDayOpenModal = async function(token){
-    return await globalThis.addOvertimeOneDayOpenModal(token);
-  };
-  GT.addOvertimeWholeMonth = async function(token){
-    return await globalThis.addOvertimeWholeMonth(token);
-  };
+  // Export the REAL internal functions (no wrappers -> avoids recursion)
+  GT.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
+  GT.addOvertimeWholeMonth = addOvertimeWholeMonth;
 } catch(e) {
   // ignore
 }
