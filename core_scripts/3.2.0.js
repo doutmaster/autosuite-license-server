@@ -276,21 +276,7 @@ function injectUI(){
         <button class="mt-btn primary" id="mt_clean_page">Duplikate (Fahrer, diese Seite)</button>
         <button class="mt-btn primary" id="mt_clean_driver">Duplikate (ganzer Fahrer)</button>
       </div>
-
-
-      <div style="font-weight:900;margin:10px 0 6px;">Überstunden hinzufügen (separat vom Ziel oben)</div>
-      <div class="mt-row">
-        <div class="mt-field" style="flex:1;min-width:140px">
-          <label>Std</label>
-          <input id="mt_ot_add_hours" type="number" step="0.25" min="0" placeholder="z.B. 1 oder 5">
-        </div>
-      </div>
-      <div class="mt-row">
-        <button class="mt-btn primary" id="mt_ot_add_one_open">Überstunden (Nur 1 Tag, Modal offen)</button>
-        <button class="mt-btn primary" id="mt_ot_add_month">Überstunden (1 Monat, ganzer Fahrer)</button>
-      </div>
-
-      <div style="font-weight:900;margin:10px 0 6px;">Multi Driver (Liste unten)</div>
+<div style="font-weight:900;margin:10px 0 6px;">Multi Driver (Liste unten)</div>
       <div class="mt-field">
         <label>Fahrer-Liste (eine Zeile pro Fahrer)</label>
         <textarea id="mt_driver_list" rows="6" placeholder="z.B.&#10;Aleksandar Ichkov&#10;David Györi&#10;..."></textarea>
@@ -304,11 +290,7 @@ function injectUI(){
     </div>
   `;
   document.body.appendChild(wrap);
-  // Ensure no inline onclick leftovers (older injected versions)
-  try{ const b1=$('#mt_ot_add_one_open'); if(b1){ b1.removeAttribute('onclick'); b1.onclick=null; } }catch(_){ }
-  try{ const b2=$('#mt_ot_add_month'); if(b2){ b2.removeAttribute('onclick'); b2.onclick=null; } }catch(_){ }
-
-  // Toggle icon
+// Toggle icon
   const toggle=document.createElement('button');
   toggle.className='mt-toggle';
   toggle.id='mt_toggle_btn';
@@ -1527,37 +1509,7 @@ function wireButtons(){
   bindMaintenance('#mt_clean_one_open', cleanOneOpenModal, 'CleanOne');
   bindMaintenance('#mt_clean_page', cleanPageForCurrentDriver, 'CleanPage');
   bindMaintenance('#mt_clean_driver', cleanAllPagesForCurrentDriver, 'CleanDriver');
-
-  // Manual overtime add (separat vom Ziel oben)
-  bindMaintenance('#mt_ot_add_one_open', addOvertimeOneDayOpenModal, 'OT+OneDay');
-  bindMaintenance('#mt_ot_add_month', addOvertimeWholeMonth, 'OT+Month');
 }
-
-/* ---------------- Expose manual OT helpers (safety) ---------------- */
-try{
-  const PAGE = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
-
-  // Expose on the real page window (for inline handlers / eval contexts)
-  PAGE.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
-  PAGE.addOvertimeWholeMonth = addOvertimeWholeMonth;
-
-  // Also expose on the userscript global (some runtimes bind events here)
-  try{ window.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal; }catch(_){}
-  try{ window.addOvertimeWholeMonth = addOvertimeWholeMonth; }catch(_){}
-  try{ globalThis.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal; }catch(_){}
-  try{ globalThis.addOvertimeWholeMonth = addOvertimeWholeMonth; }catch(_){}
-}catch(e){}
-
-
-/* ---------------- Loader-safe global exports (no recursion) ---------------- */
-try {
-  // In loader environments (new Function), the safest shared namespace is globalThis.
-  // Export direct references so click-handlers or eval contexts can always find them.
-  if (typeof globalThis !== 'undefined') {
-    globalThis.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
-    globalThis.addOvertimeWholeMonth = addOvertimeWholeMonth;
-  }
-} catch(e) {}
 
 /* ---------------- Init ---------------- */
 state.mode = GM_GetValueSafe(KEYS.mode, 'UPS');
