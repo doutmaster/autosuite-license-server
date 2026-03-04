@@ -578,23 +578,17 @@ function getHardEndCapByMode(dateStr, startMins){
   const wd = d.getDay();
 
   // GLS
-  if(state.mode==='GLS') return timeStrToMins('15:45');
+  if(state.mode==='GLS') return timeStrToMins('18:00');
 
   // UPS
   if(state.mode==='UPS'){
-    if(wd===2 || wd===3) return timeStrToMins('16:15'); // Tue/Wed
-    return timeStrToMins('16:00');
+    return timeStrToMins('18:30');
   }
 
-  // DPD (allow overtime, but keep it sane)
+  // DPD (allow overtime; wider headroom for Überstunden)
   if(state.mode==='DPD'){
-    // Absolute latest varies a bit by weekday, but we also cap by "max 10h from start".
-    let abs;
-    if(wd===1) abs = timeStrToMins('15:30');          // Monday
-    else if(wd===2 || wd===3) abs = timeStrToMins('16:00'); // Tue/Wed
-    else if(wd===4 || wd===5) abs = timeStrToMins('15:00'); // Thu/Fri
-    else abs = timeStrToMins('16:00');
-    const maxFromStart = (startMins!=null) ? (startMins + 600) : abs; // +10h
+    const abs = timeStrToMins('17:30'); // hard cap
+    const maxFromStart = (startMins!=null) ? (startMins + 750) : abs; // +12h30 max span
     return Math.min(abs, maxFromStart);
   }
 
