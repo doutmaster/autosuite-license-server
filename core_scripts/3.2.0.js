@@ -2,6 +2,10 @@
 (function(){
 'use strict';
 
+// --- Page window bridge (Tampermonkey sandbox-safe) ---
+const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+
 /* ---------------- Base config ---------------- */
 const DELAYS={modal:5000,openWait:5000,step:900,ajax:1200,swal:1200,retry:250,modalClose:3000,afterClose:5000,pageTurn:1100,tableRedrawPoll:150,tableRedrawTimeout:6000};
 const KEYS={
@@ -1542,10 +1546,17 @@ function wireButtons(){
 
 /* ---------------- Expose manual OT helpers (safety) ---------------- */
 try{
-  // In some TM runtimes/buttons, these helpers may be referenced outside closure.
-  // Expose them to window to avoid "is not defined" errors.
-  window.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
-  window.addOvertimeWholeMonth = addOvertimeWholeMonth;
+  const PAGE = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
+
+  // Expose on the real page window (for inline handlers / eval contexts)
+  PAGE.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
+  PAGE.addOvertimeWholeMonth = addOvertimeWholeMonth;
+
+  // Also expose on the userscript global (some runtimes bind events here)
+  try{ window.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal; }catch(_){}
+  try{ window.addOvertimeWholeMonth = addOvertimeWholeMonth; }catch(_){}
+  try{ globalThis.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal; }catch(_){}
+  try{ globalThis.addOvertimeWholeMonth = addOvertimeWholeMonth; }catch(_){}
 }catch(e){}
 
 /* ---------------- Init ---------------- */
