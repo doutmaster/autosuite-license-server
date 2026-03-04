@@ -1522,7 +1522,7 @@ function wireButtons(){
   $('#mt_ot_add_one_open')?.addEventListener('click', async ()=>{
     if(state.running) return;
     const token=++state.runToken; setRunning(true);
-    try{ await globalThis.addOvertimeOneDayOpenModal(token); }
+    try{ await addOvertimeOneDayOpenModal(token); }
     catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+OneDay'); }
     finally{ setRunning(false); }
   });
@@ -1530,7 +1530,7 @@ function wireButtons(){
   $('#mt_ot_add_month')?.addEventListener('click', async ()=>{
     if(state.running) return;
     const token=++state.runToken; setRunning(true);
-    try{ await globalThis.addOvertimeWholeMonth(token); }
+    try{ await addOvertimeWholeMonth(token); }
     catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+Month'); }
     finally{ setRunning(false); }
   });
@@ -1539,17 +1539,6 @@ function wireButtons(){
 
 
 /* ---------------- Expose manual OT helpers (safety) ---------------- */
-
-/* ---------------- Expose manual OT helpers (loader-safe) ---------------- */
-try{
-  const GT = (typeof globalThis !== 'undefined') ? globalThis : (typeof window !== 'undefined' ? window : this);
-  // Export the REAL internal functions (no wrappers -> avoids recursion)
-  GT.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
-  GT.addOvertimeWholeMonth = addOvertimeWholeMonth;
-} catch(e) {
-  // ignore
-}
-
 try{
   const PAGE = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -1563,6 +1552,17 @@ try{
   try{ globalThis.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal; }catch(_){}
   try{ globalThis.addOvertimeWholeMonth = addOvertimeWholeMonth; }catch(_){}
 }catch(e){}
+
+
+/* ---------------- Loader-safe global exports (no recursion) ---------------- */
+try {
+  // In loader environments (new Function), the safest shared namespace is globalThis.
+  // Export direct references so click-handlers or eval contexts can always find them.
+  if (typeof globalThis !== 'undefined') {
+    globalThis.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
+    globalThis.addOvertimeWholeMonth = addOvertimeWholeMonth;
+  }
+} catch(e) {}
 
 /* ---------------- Init ---------------- */
 state.mode = GM_GetValueSafe(KEYS.mode, 'UPS');
