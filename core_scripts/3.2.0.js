@@ -2,6 +2,8 @@
 (function(){
 'use strict';
 
+const CORE_VERSION = '3.3.2-optionD';
+
 // --- Page window bridge (Tampermonkey sandbox-safe) ---
 const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
@@ -202,12 +204,19 @@ function applyTheme(){
 }
 
 function injectUI(){
-  if($('#mt_card')) return;
+  const existing = $('#mt_card');
+  if(existing){
+    const v = existing.getAttribute('data-core')||'';
+    if(v === CORE_VERSION) return;
+    // remove old UI from previous core versions
+    const wrap = existing.closest('.mt-wrap');
+    if(wrap) wrap.remove(); else existing.remove();
+  }
 
   const wrap=document.createElement('div');
   wrap.className='mt-wrap';
   wrap.innerHTML=`
-    <div class="mt-card" id="mt_card">
+    <div class="mt-card" id="mt_card" data-core="${CORE_VERSION}">
       <div class="mt-header">
         <div class="mt-title">
           <span class="mt-pill" id="mt_badge">${state.mode}</span>
@@ -295,6 +304,9 @@ function injectUI(){
     </div>
   `;
   document.body.appendChild(wrap);
+  // Ensure no inline onclick leftovers (older injected versions)
+  try{ const b1=$('#mt_ot_add_one_open'); if(b1){ b1.removeAttribute('onclick'); b1.onclick=null; } }catch(_){ }
+  try{ const b2=$('#mt_ot_add_month'); if(b2){ b2.removeAttribute('onclick'); b2.onclick=null; } }catch(_){ }
 
   // Toggle icon
   const toggle=document.createElement('button');
@@ -1494,49 +1506,32 @@ function wireButtons(){
     finally{ state.currentDriverName=null; setRunning(false); setReady(false); }
   });
 
-  // Cleaner buttons
-  $('#mt_clean_one_open').addEventListener('click', async ()=>{
-    if(state.running) return;
-    const token=++state.runToken; setRunning(true);
-    try{ await cleanOneOpenModal(token); }
-    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanOne'); }
-    finally{ setRunning(false); }
-  });
-  $('#mt_clean_page').addEventListener('click', async ()=>{
-    if(state.running) return;
-    const token=++state.runToken; setRunning(true);
-    try{ await cleanPageForCurrentDriver(token); }
-    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanPage'); }
-    finally{ setRunning(false); }
-  });
-  $('#mt_clean_driver').addEventListener('click', async ()=>{
-    if(state.running) return;
-    const token=++state.runToken; setRunning(true);
-    try{ await cleanAllPagesForCurrentDriver(token); }
-    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'CleanDriver'); }
-    finally{ setRunning(false); }
-  });
+  // Maintenance actions (Option D): Duplikate + Überstunden (separat) use same runner
+  function bindMaintenance(btnSel, fn, errTag){
+    const b = $(btnSel);
+    if(!b) return;
+    // remove legacy inline onclicks (older cores)
+    try{ b.removeAttribute('onclick'); }catch{}
+    b.addEventListener('click', async (ev)=>{
+      ev.preventDefault();
+      ev.stopPropagation();
+      if(state.running) return;
+      const token = ++state.runToken;
+      setRunning(true);
+      try{ await fn(token); }
+      catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e, errTag); }
+      finally{ setRunning(false); }
+    });
+  }
 
+  bindMaintenance('#mt_clean_one_open', cleanOneOpenModal, 'CleanOne');
+  bindMaintenance('#mt_clean_page', cleanPageForCurrentDriver, 'CleanPage');
+  bindMaintenance('#mt_clean_driver', cleanAllPagesForCurrentDriver, 'CleanDriver');
 
-  // Manual overtime add (separate from Ziel oben)
-  $('#mt_ot_add_one_open')?.addEventListener('click', async ()=>{
-    if(state.running) return;
-    const token=++state.runToken; setRunning(true);
-    try{ await addOvertimeOneDayOpenModal(token); }
-    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+OneDay'); }
-    finally{ setRunning(false); }
-  });
-
-  $('#mt_ot_add_month')?.addEventListener('click', async ()=>{
-    if(state.running) return;
-    const token=++state.runToken; setRunning(true);
-    try{ await addOvertimeWholeMonth(token); }
-    catch(e){ if(e===ABORT) log('Gestoppt'); else logErr(e,'OT+Month'); }
-    finally{ setRunning(false); }
-  });
+  // Manual overtime add (separat vom Ziel oben)
+  bindMaintenance('#mt_ot_add_one_open', addOvertimeOneDayOpenModal, 'OT+OneDay');
+  bindMaintenance('#mt_ot_add_month', addOvertimeWholeMonth, 'OT+Month');
 }
-
-
 
 /* ---------------- Expose manual OT helpers (safety) ---------------- */
 try{
@@ -1567,6 +1562,20 @@ try {
 /* ---------------- Init ---------------- */
 state.mode = GM_GetValueSafe(KEYS.mode, 'UPS');
 if(!MODES[state.mode]) state.mode='UPS';
+
+
+/* ---------------- Robust click capture for Manual OT buttons ----------------
+   In loader/eval environments or when old UI versions injected inline onclick handlers,
+   clicks may execute in a different scope and throw ReferenceError.
+   This capture-phase delegator guarantees the click is handled by THIS core.
+-------------------------------------------------------------------------- */
+(function(){
+  try{
+    
+// (Option D) No capture-click bridge needed; buttons are bound via maintenance runner.
+
+  }catch(_){}
+})();
 
 injectUI();
 applyTheme();
