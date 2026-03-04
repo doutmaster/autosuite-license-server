@@ -1538,6 +1538,16 @@ function wireButtons(){
   });
 }
 
+
+
+/* ---------------- Expose manual OT helpers (safety) ---------------- */
+try{
+  // In some TM runtimes/buttons, these helpers may be referenced outside closure.
+  // Expose them to window to avoid "is not defined" errors.
+  window.addOvertimeOneDayOpenModal = addOvertimeOneDayOpenModal;
+  window.addOvertimeWholeMonth = addOvertimeWholeMonth;
+}catch(e){}
+
 /* ---------------- Init ---------------- */
 state.mode = GM_GetValueSafe(KEYS.mode, 'UPS');
 if(!MODES[state.mode]) state.mode='UPS';
