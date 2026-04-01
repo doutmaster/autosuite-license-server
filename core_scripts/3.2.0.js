@@ -345,29 +345,161 @@ function findSignatureCanvas(modal){
       || modal.querySelector('#signature canvas')
       || modal.querySelector('.kbw-signature canvas');
 }
+function dispatchSigEvent(el, type, x, y){
+  const view = window;
+
+  try {
+    const pe = new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      view,
+      clientX: x,
+      clientY: y,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      buttons: /up$/i.test(type) ? 0 : 1
+    });
+    el.dispatchEvent(pe);
+  } catch {}
+
+  const mouseType =
+    type === 'pointerdown' ? 'mousedown' :
+    type === 'pointermove' ? 'mousemove' :
+    type === 'pointerup'   ? 'mouseup'   : type;
+
+  try {
+    const me = new MouseEvent(mouseType, {
+      bubbles: true,
+      cancelable: true,
+      view,
+      clientX: x,
+      clientY: y,
+      buttons: /up$/i.test(mouseType) ? 0 : 1
+    });
+    el.dispatchEvent(me);
+  } catch {}
+}
+
+function findSignatureParts(modal){
+  const wrap =
+    modal.querySelector('#signature.kbw-signature') ||
+    modal.querySelector('.kbw-signature') ||
+    modal.querySelector('#signature');
+
+  const canvas =
+    modal.querySelector('#signature_canvas') ||
+    modal.querySelector('.kbw-signature canvas') ||
+    modal.querySelector('#signature canvas');
+
+  return { wrap, canvas };
+}
+
+async function waitForSignatureReady(modal, token){
+  return await waitFor(() => {
+    const parts = findSignatureParts(modal);
+    const c = parts.canvas;
+    if (!c) return null;
+
+    const r = c.getBoundingClientRect();
+    if (r.width < 20 || r.height < 20) return null;
+    if (getComputedStyle(c).display === 'none') return null;
+
+    return parts;
+  }, 8000, token, 150);
+}
+
 async function replaySignature(modal, driverName, token){
-  const profiles=loadProfiles();
-  const prof=profiles[profileKey(driverName)];
-  const sig=prof?.sig;
-  if(!sig?.strokes || !sig.strokes.length){ log(`❌ Keine Signatur gespeichert für: ${driverName}`); throw ABORT; }
-  const canvas=findSignatureCanvas(modal);
-  if(!canvas){ log('⚠️ signature_canvas nicht gefunden'); throw ABORT; }
-  canvas.scrollIntoView({block:'center'});
-  await cancellableSleep(150, token);
-  const r=canvas.getBoundingClientRect();
-  for(const stroke of sig.strokes){ if(!stroke || stroke.length<2) continue;
-    const p0=stroke[0];
-    dispatchMouse(canvas,'mousedown', r.left+p0.x*r.width, r.top+p0.y*r.height);
-    await cancellableSleep(10, token);
-    for(let i=1;i<stroke.length;i++){ const pt=stroke[i]; dispatchMouse(canvas,'mousemove', r.left+pt.x*r.width, r.top+pt.y*r.height); await cancellableSleep(6, token); }
-    const plast=stroke[stroke.length-1];
-    dispatchMouse(canvas,'mouseup', r.left+plast.x*r.width, r.top+plast.y*r.height);
-    await cancellableSleep(40, token);
+  const profiles = loadProfiles();
+  const prof = profiles[profileKey(driverName)];
+  const sig = prof?.sig;
+
+  if (!sig?.strokes || !sig.strokes.length) {
+    log(`❌ Keine Signatur gespeichert für: ${driverName}`);
+    throw ABORT;
   }
-  const sigDiv = modal.querySelector('#signature.kbw-signature, .kbw-signature');
-  if(sigDiv){ sigDiv.dispatchEvent(new Event('change',{bubbles:true})); sigDiv.dispatchEvent(new Event('input',{bubbles:true})); }
-  await cancellableSleep(150, token);
-  log('✅ Signatur replayed');
+
+  const parts = await waitForSignatureReady(modal, token);
+  if (!parts?.canvas) {
+    log('⚠️ Signaturfeld nicht bereit');
+    throw ABORT;
+  }
+
+  const { wrap, canvas } = parts;
+
+  try { canvas.scrollIntoView({ block: 'center' }); } catch {}
+  await cancellableSleep(400, token);
+
+  const r = canvas.getBoundingClientRect();
+  if (r.width < 20 || r.height < 20) {
+    log('⚠️ Canvas Größe ungültig');
+    throw ABORT;
+  }
+
+  // CLEAR OLD SIGNATURE (VERY IMPORTANT)
+  try {
+    if (wrap && window.jQuery && window.jQuery(wrap).signature) {
+      window.jQuery(wrap).signature('clear');
+      await cancellableSleep(150, token);
+    }
+  } catch {}
+
+  for (const stroke of sig.strokes) {
+    if (!stroke || stroke.length < 2) continue;
+
+    const p0 = stroke[0];
+    const x0 = r.left + p0.x * r.width;
+    const y0 = r.top  + p0.y * r.height;
+
+    dispatchSigEvent(canvas, 'pointerdown', x0, y0);
+    await cancellableSleep(20, token);
+
+    for (let i = 1; i < stroke.length; i++) {
+      const pt = stroke[i];
+      const x = r.left + pt.x * r.width;
+      const y = r.top  + pt.y * r.height;
+      dispatchSigEvent(canvas, 'pointermove', x, y);
+      await cancellableSleep(12, token);
+    }
+
+    const plast = stroke[stroke.length - 1];
+    const xl = r.left + plast.x * r.width;
+    const yl = r.top  + plast.y * r.height;
+
+    dispatchSigEvent(canvas, 'pointerup', xl, yl);
+    await cancellableSleep(80, token);
+  }
+
+  // FORCE SAVE EVENTS
+  try {
+    wrap?.dispatchEvent(new Event('change', { bubbles: true }));
+    wrap?.dispatchEvent(new Event('input', { bubbles: true }));
+    canvas.dispatchEvent(new Event('change', { bubbles: true }));
+    canvas.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch {}
+
+  await cancellableSleep(300, token);
+
+  // VERIFY SIGNATURE EXISTS
+  try {
+    const ctx = canvas.getContext('2d');
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+    let hasInk = false;
+
+    for (let i = 3; i < img.length; i += 4) {
+      if (img[i] > 0) {
+        hasInk = true;
+        break;
+      }
+    }
+
+    if (!hasInk) {
+      log('❌ Signatur nicht erkannt → Abbruch');
+      throw ABORT;
+    }
+  } catch {}
+
+  log('✅ Signatur sicher gesetzt');
 }
 
 /* ---------------- Plan generators (mode-specific) ---------------- */
