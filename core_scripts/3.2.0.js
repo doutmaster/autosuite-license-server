@@ -345,69 +345,7 @@ function findSignatureCanvas(modal){
       || modal.querySelector('#signature canvas')
       || modal.querySelector('.kbw-signature canvas');
 }
-function dispatchSigEvent(el, type, x, y){
-  const view = window;
 
-  try {
-    const pe = new PointerEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true,
-      buttons: /up$/i.test(type) ? 0 : 1
-    });
-    el.dispatchEvent(pe);
-  } catch {}
-
-  const mouseType =
-    type === 'pointerdown' ? 'mousedown' :
-    type === 'pointermove' ? 'mousemove' :
-    type === 'pointerup'   ? 'mouseup'   : type;
-
-  try {
-    const me = new MouseEvent(mouseType, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      buttons: /up$/i.test(mouseType) ? 0 : 1
-    });
-    el.dispatchEvent(me);
-  } catch {}
-}
-
-function findSignatureParts(modal){
-  const wrap =
-    modal.querySelector('#signature.kbw-signature') ||
-    modal.querySelector('.kbw-signature') ||
-    modal.querySelector('#signature');
-
-  const canvas =
-    modal.querySelector('#signature_canvas') ||
-    modal.querySelector('.kbw-signature canvas') ||
-    modal.querySelector('#signature canvas');
-
-  return { wrap, canvas };
-}
-
-async function waitForSignatureReady(modal, token){
-  return await waitFor(() => {
-    const parts = findSignatureParts(modal);
-    const c = parts.canvas;
-    if (!c) return null;
-
-    const r = c.getBoundingClientRect();
-    if (r.width < 20 || r.height < 20) return null;
-    if (getComputedStyle(c).display === 'none') return null;
-
-    return parts;
-  }, 8000, token, 150);
-}
 
 function dispatchSigEvent(el, type, x, y){
   const view = window;
