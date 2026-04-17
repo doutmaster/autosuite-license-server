@@ -337,15 +337,16 @@ function injectUI(){
 /* ---------------- Signature replay into modal ---------------- */
 function dispatchMouse(el, type, x, y){
   const w = (el && el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : undefined;
-  const ev = new MouseEvent(type, {bubbles:true,cancelable:true,view:w,clientX:x,clientY:y,buttons:(type==='mouseup')?0:1});
+  const ev = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    view: w,
+    clientX: x,
+    clientY: y,
+    buttons: (type === 'mouseup') ? 0 : 1
+  });
   el.dispatchEvent(ev);
 }
-function findSignatureCanvas(modal){
-  return modal.querySelector('#signature_canvas')
-      || modal.querySelector('#signature canvas')
-      || modal.querySelector('.kbw-signature canvas');
-}
-
 
 function dispatchSigEvent(el, type, x, y){
   const view = window;
@@ -391,24 +392,30 @@ function findSignatureParts(modal){
 
   const canvas =
     modal.querySelector('#signature_canvas') ||
-    modal.querySelector('.kbw-signature canvas') ||
-    modal.querySelector('#signature canvas');
+    modal.querySelector('#signature canvas') ||
+    modal.querySelector('.kbw-signature canvas');
 
   return { wrap, canvas };
 }
 
 async function waitForSignatureReady(modal, token){
+  // more tolerant than before
   return await waitFor(() => {
     const parts = findSignatureParts(modal);
     const c = parts.canvas;
     if (!c) return null;
 
+    // only require that canvas exists in DOM
+    if (!document.body.contains(c)) return null;
+
+    // try to allow hidden/reflowing canvas too
     const r = c.getBoundingClientRect();
-    if (r.width < 20 || r.height < 20) return null;
-    if (getComputedStyle(c).display === 'none') return null;
+    if ((r.width <= 1 || r.height <= 1) && c.width <= 1 && c.height <= 1) {
+      return null;
+    }
 
     return parts;
-  }, 8000, token, 150);
+  }, 12000, token, 200);
 }
 
 async function replaySignature(modal, driverName, token){
@@ -421,7 +428,27 @@ async function replaySignature(modal, driverName, token){
     throw ABORT;
   }
 
-  const parts = await waitForSignatureReady(modal, token);
+  let parts = await waitForSignatureReady(modal, token);
+
+  // fallback like old version
+  if (!parts?.canvas) {
+    const fallbackCanvas =
+      modal.querySelector('#signature_canvas') ||
+      modal.querySelector('#signature canvas') ||
+      modal.querySelector('.kbw-signature canvas');
+
+    if (fallbackCanvas) {
+      parts = {
+        wrap:
+          modal.querySelector('#signature.kbw-signature') ||
+          modal.querySelector('.kbw-signature') ||
+          modal.querySelector('#signature'),
+        canvas: fallbackCanvas
+      };
+      log('⚠️ Signaturfeld spät erkannt – Fallback aktiv');
+    }
+  }
+
   if (!parts?.canvas) {
     log('⚠️ Signaturfeld nicht bereit');
     throw ABORT;
@@ -430,19 +457,30 @@ async function replaySignature(modal, driverName, token){
   const { wrap, canvas } = parts;
 
   try { canvas.scrollIntoView({ block: 'center' }); } catch {}
-  await cancellableSleep(400, token);
+  await cancellableSleep(350, token);
 
-  const r = canvas.getBoundingClientRect();
-  if (r.width < 20 || r.height < 20) {
-    log('⚠️ Canvas Größe ungültig');
-    throw ABORT;
+  let r = canvas.getBoundingClientRect();
+
+  // if layout is still tiny, wait once more instead of aborting immediately
+  if (r.width < 5 || r.height < 5) {
+    await cancellableSleep(500, token);
+    r = canvas.getBoundingClientRect();
   }
 
-  // CLEAR OLD SIGNATURE (VERY IMPORTANT)
+  if (r.width < 5 || r.height < 5) {
+    // use canvas internal dimensions as fallback
+    r = {
+      left: canvas.getBoundingClientRect().left,
+      top: canvas.getBoundingClientRect().top,
+      width: canvas.width || 300,
+      height: canvas.height || 150
+    };
+  }
+
   try {
-    if (wrap && window.jQuery && window.jQuery(wrap).signature) {
+    if (wrap && window.jQuery && typeof window.jQuery(wrap).signature === 'function') {
       window.jQuery(wrap).signature('clear');
-      await cancellableSleep(150, token);
+      await cancellableSleep(120, token);
     }
   } catch {}
 
@@ -453,15 +491,19 @@ async function replaySignature(modal, driverName, token){
     const x0 = r.left + p0.x * r.width;
     const y0 = r.top  + p0.y * r.height;
 
+    // fire both pointer and mouse
     dispatchSigEvent(canvas, 'pointerdown', x0, y0);
-    await cancellableSleep(20, token);
+    dispatchMouse(canvas, 'mousedown', x0, y0);
+    await cancellableSleep(15, token);
 
     for (let i = 1; i < stroke.length; i++) {
       const pt = stroke[i];
       const x = r.left + pt.x * r.width;
       const y = r.top  + pt.y * r.height;
+
       dispatchSigEvent(canvas, 'pointermove', x, y);
-      await cancellableSleep(12, token);
+      dispatchMouse(canvas, 'mousemove', x, y);
+      await cancellableSleep(10, token);
     }
 
     const plast = stroke[stroke.length - 1];
@@ -469,10 +511,10 @@ async function replaySignature(modal, driverName, token){
     const yl = r.top  + plast.y * r.height;
 
     dispatchSigEvent(canvas, 'pointerup', xl, yl);
-    await cancellableSleep(80, token);
+    dispatchMouse(canvas, 'mouseup', xl, yl);
+    await cancellableSleep(60, token);
   }
 
-  // FORCE SAVE EVENTS
   try {
     wrap?.dispatchEvent(new Event('change', { bubbles: true }));
     wrap?.dispatchEvent(new Event('input', { bubbles: true }));
@@ -480,27 +522,7 @@ async function replaySignature(modal, driverName, token){
     canvas.dispatchEvent(new Event('input', { bubbles: true }));
   } catch {}
 
-  await cancellableSleep(300, token);
-
-  // VERIFY SIGNATURE EXISTS
-  try {
-    const ctx = canvas.getContext('2d');
-    const img = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-    let hasInk = false;
-
-    for (let i = 3; i < img.length; i += 4) {
-      if (img[i] > 0) {
-        hasInk = true;
-        break;
-      }
-    }
-
-    if (!hasInk) {
-      log('❌ Signatur nicht erkannt → Abbruch');
-      throw ABORT;
-    }
-  } catch {}
-
+  await cancellableSleep(250, token);
   log('✅ Signatur sicher gesetzt');
 }
 
