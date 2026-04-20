@@ -190,7 +190,7 @@ function loadProfileToDashboard(name){
     } else {
       $('#mt_sig_status').textContent='Signatur: leer';
     }
-  }
+  
 }catch(e){
   console.warn('loadProfile signature failed', e);
 }
