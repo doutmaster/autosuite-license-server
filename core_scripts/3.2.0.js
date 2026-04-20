@@ -73,32 +73,72 @@ async function waitForDriverApplied(name, token){const want=normName(name);await
 
 /* ---------------- Signature pad on DASHBOARD ---------------- */
 function setupDashSignaturePad(){
-  const el=$('#mt_sig_pad');
-  if(!el || !window.jQuery || typeof window.jQuery.fn.signature!=='function') return;
-  const $pad=window.jQuery(el);
-  try{
-    if(!$pad.data('kbwSignature')){
-      $pad.signature({background:'#ffffff', color:'#000000', thickness:2});
-    }
-    const refreshStatus=()=>{
-      try{ $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK'; }catch{}
-    };
-    refreshStatus();
-    el.addEventListener('mouseup', refreshStatus);
-    el.addEventListener('touchend', refreshStatus);
-    $('#mt_sig_clear')?.addEventListener('click', ()=>{
-      try{ $pad.signature('clear'); $('#mt_sig_status').textContent='Signatur: leer'; }catch{}
+  const el = $('#mt_sig_pad');
+  if(!el) return;
+  if(!window.jQuery || typeof window.jQuery.fn.signature !== 'function'){
+    console.warn('signature plugin missing on dashboard');
+    return;
+  }
+
+  const $pad = window.jQuery(el);
+
+  try {
+    // hard reset in case script reloaded
+    try {
+      if ($pad.data('kbwSignature')) {
+        $pad.signature('clear');
+      }
+    } catch {}
+
+    el.innerHTML = '';
+
+    $pad.signature({
+      background: '#ffffff',
+      color: '#000000',
+      thickness: 2
     });
-  }catch(e){
+
+    const refreshStatus = () => {
+      try {
+        $('#mt_sig_status').textContent =
+          $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
+      } catch {}
+    };
+
+    refreshStatus();
+
+    el.addEventListener('mouseup', refreshStatus);
+    el.addEventListener('mouseleave', refreshStatus);
+    el.addEventListener('touchend', refreshStatus);
+
+    const clearBtn = $('#mt_sig_clear');
+    if (clearBtn) {
+      const newBtn = clearBtn.cloneNode(true);
+      clearBtn.parentNode.replaceChild(newBtn, clearBtn);
+
+      newBtn.addEventListener('click', () => {
+        try {
+          $pad.signature('clear');
+          $('#mt_sig_status').textContent = 'Signatur: leer';
+        } catch (e) {
+          console.warn('signature clear failed', e);
+        }
+      });
+    }
+
+  } catch (e) {
     console.warn('setupDashSignaturePad failed', e);
   }
 }
+
 function sigPadHasInk(){
-  try{
-    const el=$('#mt_sig_pad');
-    if(!el || !window.jQuery || typeof window.jQuery.fn.signature!=='function') return false;
+  try {
+    const el = $('#mt_sig_pad');
+    if(!el || !window.jQuery) return false;
     return !window.jQuery(el).signature('isEmpty');
-  }catch{return false;}
+  } catch {
+    return false;
+  }
 }
 
 /* ---------------- Profiles: per-driver, per-mode ---------------- */
@@ -202,7 +242,22 @@ GM_addStyle(`
 .mt-sigbox{margin-top:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:8px}
 .mt-sigrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
 .mt-sigstatus{font-weight:900;color:var(--mt-accent)}
-.mt-canvas{width:100%;height:120px;background:#fff;border-radius:8px;cursor:crosshair}
+.mt-canvas{
+  width:100%;
+  height:120px;
+  background:#fff;
+  border-radius:8px;
+  cursor:crosshair;
+  display:block;
+  position:relative;
+  overflow:hidden;
+  touch-action:none;
+}
+.mt-canvas canvas{
+  width:100% !important;
+  height:100% !important;
+  display:block;
+}
 .mt-pill{padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-weight:900}
 `);
 
