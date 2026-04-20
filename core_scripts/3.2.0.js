@@ -74,52 +74,58 @@ async function waitForDriverApplied(name, token){const want=normName(name);await
 /* ---------------- Signature pad on DASHBOARD ---------------- */
 function setupDashSignaturePad(){
   const el = $('#mt_sig_pad');
-  if(!el) {
+  if(!el){
     console.warn('mt_sig_pad not found');
     return;
   }
-  if(!window.jQuery || typeof window.jQuery.fn.signature !== 'function'){
+
+  // 🔥 CRITICAL: use page context jQuery
+  const $ = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : window.jQuery);
+
+  if(!$ || !$.fn.signature){
     console.warn('signature plugin missing');
     return;
   }
 
   try {
     el.innerHTML = '';
-    const $pad = window.jQuery(el);
+
+    const $pad = $(el);
+
     $pad.signature({
       background: '#ffffff',
       color: '#000000',
       thickness: 2
     });
 
+    // FORCE canvas resize fix
+    const canvas = $pad.find('canvas')[0];
+    if(canvas){
+      canvas.style.width = '100%';
+      canvas.style.height = '100%';
+    }
+
     const refreshStatus = () => {
       try {
         $('#mt_sig_status').textContent =
           $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
-      } catch(e) {
-        console.warn(e);
-      }
+      } catch(e){}
     };
 
     refreshStatus();
 
     el.addEventListener('mouseup', refreshStatus);
-    el.addEventListener('mouseleave', refreshStatus);
     el.addEventListener('touchend', refreshStatus);
 
-    const clearBtn = $('#mt_sig_clear');
-    if (clearBtn) {
-      clearBtn.onclick = () => {
-        try {
-          $pad.signature('clear');
-          $('#mt_sig_status').textContent = 'Signatur: leer';
-        } catch (e) {
-          console.warn('clear failed', e);
-        }
-      };
-    }
+    $('#mt_sig_clear').onclick = () => {
+      try {
+        $pad.signature('clear');
+        refreshStatus();
+      } catch(e){}
+    };
+
   } catch (e) {
-    console.warn('setupDashSignaturePad failed', e);
+    console.error('setupDashSignaturePad failed', e);
   }
 }
 
@@ -169,20 +175,24 @@ function loadProfileToDashboard(name){
   $('#mt_km').value  = formatDashKmDot00(prof.lastKm || '');
   if($('#mt_ot_min')) $('#mt_ot_min').value = (prof.otMin!=null? String(prof.otMin):'');
   if($('#mt_ot_max')) $('#mt_ot_max').value = (prof.otMax!=null? String(prof.otMax):'');
-  try{
-    const pad=$('#mt_sig_pad');
-    if(pad && window.jQuery && typeof window.jQuery.fn.signature==='function'){
-      const $pad=window.jQuery(pad);
-      $pad.signature('clear');
-      if(prof.sig?.json){
-        $pad.signature('draw', prof.sig.json);
-        $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
-      }else{
-        $('#mt_sig_status').textContent='Signatur: leer';
-      }
+ try{
+  const $ = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : window.jQuery);
+  const pad=$('#mt_sig_pad');
+
+  if(pad && $ && $.fn.signature){
+    const $pad=$(pad);
+
+    $pad.signature('clear');
+
+    if(prof.sig?.json){
+      $pad.signature('draw', prof.sig.json);
+      $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
+    } else {
+      $('#mt_sig_status').textContent='Signatur: leer';
     }
-  }catch(e){ console.warn('loadProfileToDashboard signature failed', e); }
-  return true;
+  }
+}catch(e){
+  console.warn('loadProfile signature failed', e);
 }
 
 /* ---------------- Ready gate ---------------- */
@@ -410,53 +420,42 @@ async function replaySignature(modal, driverName, token){
     throw ABORT;
   }
 
+  const $ = (typeof unsafeWindow !== 'undefined' ? unsafeWindow.jQuery : window.jQuery);
+
   const wrap =
     modal.querySelector('#signature.kbw-signature') ||
     modal.querySelector('.kbw-signature') ||
     modal.querySelector('#signature');
 
-  if (!wrap || !window.jQuery || typeof window.jQuery.fn.signature!=='function') {
+  if (!wrap || !$ || !$.fn.signature) {
     log('⚠️ Signaturfeld nicht gefunden');
     throw ABORT;
   }
 
-  const $wrap = window.jQuery(wrap);
-  const sigInst = $wrap.data('kbwSignature');
+  const $wrap = $(wrap);
 
-  if (!sigInst) {
-    log('⚠️ kbwSignature Instanz nicht gefunden');
-    throw ABORT;
-  }
-
-  await cancellableSleep(150, token);
+  await cancellableSleep(200, token);
 
   try {
     $wrap.signature('clear');
-    await cancellableSleep(80, token);
+    await cancellableSleep(100, token);
+
     $wrap.signature('draw', sigJson);
-    await cancellableSleep(120, token);
+
+    await cancellableSleep(200, token);
+
   } catch (e) {
-    console.error('modal signature draw failed', e);
+    console.error(e);
     log('❌ Signatur konnte nicht gesetzt werden');
     throw ABORT;
   }
-
-  try { if (typeof sigInst._changed === 'function') sigInst._changed(); } catch {}
-  try {
-    wrap.dispatchEvent(new Event('change', { bubbles: true }));
-    wrap.dispatchEvent(new Event('input', { bubbles: true }));
-  } catch {}
-
-  await cancellableSleep(120, token);
 
   try {
     if ($wrap.signature('isEmpty')) {
       log('❌ Signatur blieb leer');
       throw ABORT;
     }
-  } catch (e) {
-    if (e === ABORT) throw e;
-    log('❌ Signaturprüfung fehlgeschlagen');
+  } catch(e){
     throw ABORT;
   }
 
