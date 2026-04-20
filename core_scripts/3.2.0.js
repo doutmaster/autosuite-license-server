@@ -7,6 +7,16 @@ const CORE_VERSION = '3.3.2-optionD';
 // --- Page window bridge (Tampermonkey sandbox-safe) ---
 const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
+  function getPageJQ(){
+  try {
+    if (typeof unsafeWindow !== 'undefined' && unsafeWindow.jQuery) return unsafeWindow.jQuery;
+  } catch {}
+  try {
+    if (window.jQuery) return window.jQuery;
+  } catch {}
+  return null;
+}
+
 
 /* ---------------- Base config ---------------- */
 const DELAYS={modal:5000,openWait:5000,step:900,ajax:1200,swal:1200,retry:250,modalClose:3000,afterClose:5000,pageTurn:1100,tableRedrawPoll:150,tableRedrawTimeout:6000};
@@ -72,35 +82,39 @@ function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return fal
 async function waitForDriverApplied(name, token){const want=normName(name);await waitFor(()=>{const cur=normName(getSelectedDriverName());return (cur && cur===want) ? true : null;}, 8000, token, 150);await cancellableSleep(500, token);}
 
 /* ---------------- Signature pad on DASHBOARD ---------------- */
-function setupDashSignaturePad(){
+function setupDashSignaturePad(attempt = 0){
   const el = $('#mt_sig_pad');
   if(!el){
     console.warn('mt_sig_pad not found');
     return;
   }
 
-  const JQ = UW.jQuery || window.jQuery;
-  if(!JQ || !JQ.fn || typeof JQ.fn.signature !== 'function'){
-    console.warn('signature plugin missing');
+  const jq = getPageJQ();
+  if(!jq || !jq.fn || typeof jq.fn.signature !== 'function'){
+    if (attempt < 20) {
+      setTimeout(() => setupDashSignaturePad(attempt + 1), 500);
+    } else {
+      console.warn('signature plugin missing after retries');
+    }
     return;
   }
 
   try {
     el.innerHTML = '';
-    const $pad = JQ(el);
 
+    const $pad = jq(el);
     $pad.signature({
       background: '#ffffff',
       color: '#000000',
       thickness: 2
     });
 
-    const canvas = $pad.find('canvas')[0];
-    if (canvas) {
-      canvas.style.width = '100%';
-      canvas.style.height = '100%';
-      canvas.style.display = 'block';
-      canvas.style.touchAction = 'none';
+    const innerCanvas = el.querySelector('canvas');
+    if (innerCanvas) {
+      innerCanvas.style.width = '100%';
+      innerCanvas.style.height = '100%';
+      innerCanvas.style.display = 'block';
+      innerCanvas.style.pointerEvents = 'auto';
     }
 
     const refreshStatus = () => {
@@ -114,9 +128,9 @@ function setupDashSignaturePad(){
 
     refreshStatus();
 
-    el.addEventListener('mouseup', refreshStatus);
-    el.addEventListener('mouseleave', refreshStatus);
-    el.addEventListener('touchend', refreshStatus);
+    el.onmouseup = refreshStatus;
+    el.onmouseleave = refreshStatus;
+    el.ontouchend = refreshStatus;
 
     const clearBtn = $('#mt_sig_clear');
     if (clearBtn) {
@@ -136,10 +150,10 @@ function setupDashSignaturePad(){
 
 function sigPadHasInk(){
   try {
+    const jq = getPageJQ();
     const el = $('#mt_sig_pad');
-    const JQ = UW.jQuery || window.jQuery;
-    if(!el || !JQ || !JQ.fn || typeof JQ.fn.signature !== 'function') return false;
-    return !JQ(el).signature('isEmpty');
+    if(!el || !jq || !jq.fn || typeof jq.fn.signature !== 'function') return false;
+    return !jq(el).signature('isEmpty');
   } catch(e) {
     return false;
   }
