@@ -9,10 +9,10 @@ const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
   function getPageJQ(){
   try {
-    if (typeof unsafeWindow !== 'undefined' && unsafeWindow.jQuery) return unsafeWindow.jQuery;
+    if (typeof unsafeWindow !== 'undefined' && unsafegetPageJQ()) return unsafegetPageJQ();
   } catch {}
   try {
-    if (window.jQuery) return window.jQuery;
+    if (getPageJQ()) return getPageJQ();
   } catch {}
   return null;
 }
@@ -78,7 +78,7 @@ function normName(name){return (name||'').replace(/\s+/g,' ').trim().toLowerCase
 function loadProfiles(){const raw=GM_GetValueSafe(KEYS.profiles,'');if(!raw) return {};try{return JSON.parse(raw)||{};}catch{return {};}}
 function saveProfiles(obj){GM_SetValueSafe(KEYS.profiles, JSON.stringify(obj||{}));}
 function getSelectedDriverName(){const txt = ($('#select2-staff_id-container')?.textContent || '').trim();if(txt) return txt;const sel = $('#staff_id');const opt = sel?.selectedOptions?.[0];return (opt?.textContent||'').trim();}
-function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return false;const target=(name||'').trim().toLowerCase();const opts=Array.from(sel.options||[]);const found=opts.find(o => (o.textContent||'').replace(/\s+/g,' ').trim().toLowerCase() === target);if(!found) return false;sel.value=found.value;sel.dispatchEvent(new Event('change',{bubbles:true}));try{ if(window.jQuery) window.jQuery(sel).trigger('change'); }catch{}return true;}
+function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return false;const target=(name||'').trim().toLowerCase();const opts=Array.from(sel.options||[]);const found=opts.find(o => (o.textContent||'').replace(/\s+/g,' ').trim().toLowerCase() === target);if(!found) return false;sel.value=found.value;sel.dispatchEvent(new Event('change',{bubbles:true}));try{ if(getPageJQ()) getPageJQ()(sel).trigger('change'); }catch{}return true;}
 async function waitForDriverApplied(name, token){const want=normName(name);await waitFor(()=>{const cur=normName(getSelectedDriverName());return (cur && cur===want) ? true : null;}, 8000, token, 150);await cancellableSleep(500, token);}
 
 /* ---------------- Signature pad on DASHBOARD ---------------- */
@@ -173,7 +173,7 @@ function saveCurrentSetupToProfile(){
   let sigJson=null;
   try{
     const pad=$('#mt_sig_pad');
-    const JQ = UW.jQuery || window.jQuery;
+    const JQ = UW.jQuery || getPageJQ();
     if(pad && JQ && JQ.fn && typeof JQ.fn.signature==='function'){
       sigJson = JQ(pad).signature('toJSON');
     }
@@ -192,7 +192,7 @@ function loadProfileToDashboard(name){
   if($('#mt_ot_max')) $('#mt_ot_max').value = (prof.otMax!=null? String(prof.otMax):'');
   try{
     const pad=$('#mt_sig_pad');
-    const JQ = UW.jQuery || window.jQuery;
+    const JQ = UW.jQuery || getPageJQ();
     if(pad && JQ && JQ.fn && typeof JQ.fn.signature==='function'){
       const $pad=JQ(pad);
       $pad.signature('clear');
@@ -432,7 +432,7 @@ async function replaySignature(modal, driverName, token){
     throw ABORT;
   }
 
-  const JQ = UW.jQuery || window.jQuery;
+  const JQ = UW.jQuery || getPageJQ();
   const wrap =
     modal.querySelector('#signature.kbw-signature') ||
     modal.querySelector('.kbw-signature') ||
