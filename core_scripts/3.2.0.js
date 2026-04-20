@@ -7,16 +7,6 @@ const CORE_VERSION = '3.3.2-optionD';
 // --- Page window bridge (Tampermonkey sandbox-safe) ---
 const UW = (typeof unsafeWindow !== 'undefined') ? unsafeWindow : window;
 
-  function getPageJQ(){
-  try {
-    if (typeof unsafeWindow !== 'undefined' && unsafegetPageJQ()) return unsafegetPageJQ();
-  } catch {}
-  try {
-    if (getPageJQ()) return getPageJQ();
-  } catch {}
-  return null;
-}
-
 
 /* ---------------- Base config ---------------- */
 const DELAYS={modal:5000,openWait:5000,step:900,ajax:1200,swal:1200,retry:250,modalClose:3000,afterClose:5000,pageTurn:1100,tableRedrawPoll:150,tableRedrawTimeout:6000};
@@ -78,87 +68,39 @@ function normName(name){return (name||'').replace(/\s+/g,' ').trim().toLowerCase
 function loadProfiles(){const raw=GM_GetValueSafe(KEYS.profiles,'');if(!raw) return {};try{return JSON.parse(raw)||{};}catch{return {};}}
 function saveProfiles(obj){GM_SetValueSafe(KEYS.profiles, JSON.stringify(obj||{}));}
 function getSelectedDriverName(){const txt = ($('#select2-staff_id-container')?.textContent || '').trim();if(txt) return txt;const sel = $('#staff_id');const opt = sel?.selectedOptions?.[0];return (opt?.textContent||'').trim();}
-function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return false;const target=(name||'').trim().toLowerCase();const opts=Array.from(sel.options||[]);const found=opts.find(o => (o.textContent||'').replace(/\s+/g,' ').trim().toLowerCase() === target);if(!found) return false;sel.value=found.value;sel.dispatchEvent(new Event('change',{bubbles:true}));try{ if(getPageJQ()) getPageJQ()(sel).trigger('change'); }catch{}return true;}
+function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return false;const target=(name||'').trim().toLowerCase();const opts=Array.from(sel.options||[]);const found=opts.find(o => (o.textContent||'').replace(/\s+/g,' ').trim().toLowerCase() === target);if(!found) return false;sel.value=found.value;sel.dispatchEvent(new Event('change',{bubbles:true}));try{ if(window.jQuery) window.jQuery(sel).trigger('change'); }catch{}return true;}
 async function waitForDriverApplied(name, token){const want=normName(name);await waitFor(()=>{const cur=normName(getSelectedDriverName());return (cur && cur===want) ? true : null;}, 8000, token, 150);await cancellableSleep(500, token);}
 
 /* ---------------- Signature pad on DASHBOARD ---------------- */
-function setupDashSignaturePad(attempt = 0){
-  const el = $('#mt_sig_pad');
-  if(!el){
-    console.warn('mt_sig_pad not found');
-    return;
-  }
-
-  const jq = getPageJQ();
-  if(!jq || !jq.fn || typeof jq.fn.signature !== 'function'){
-    if (attempt < 20) {
-      setTimeout(() => setupDashSignaturePad(attempt + 1), 500);
-    } else {
-      console.warn('signature plugin missing after retries');
-    }
-    return;
-  }
-
-  try {
-    el.innerHTML = '';
-
-    const $pad = jq(el);
-    $pad.signature({
-      background: '#ffffff',
-      color: '#000000',
-      thickness: 2
-    });
-
-    const innerCanvas = el.querySelector('canvas');
-    if (innerCanvas) {
-      innerCanvas.style.width = '100%';
-      innerCanvas.style.height = '100%';
-      innerCanvas.style.display = 'block';
-      innerCanvas.style.pointerEvents = 'auto';
-    }
-
-    const refreshStatus = () => {
-      try {
-        $('#mt_sig_status').textContent =
-          $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
-      } catch(e) {
-        console.warn(e);
-      }
-    };
-
-    refreshStatus();
-
-    el.onmouseup = refreshStatus;
-    el.onmouseleave = refreshStatus;
-    el.ontouchend = refreshStatus;
-
-    const clearBtn = $('#mt_sig_clear');
-    if (clearBtn) {
-      clearBtn.onclick = () => {
-        try {
-          $pad.signature('clear');
-          refreshStatus();
-        } catch (e) {
-          console.warn('clear failed', e);
-        }
-      };
-    }
-  } catch (e) {
-    console.warn('setupDashSignaturePad failed', e);
-  }
+let dashSig={drawing:false,strokes:[],cur:[],hasInk:false};
+function setupDashSignaturePad(){
+  const c=$('#mt_sig_canvas'); if(!c) return;
+  const ctx=c.getContext('2d');
+  const clear=()=>{ctx.clearRect(0,0,c.width,c.height);dashSig={drawing:false,strokes:[],cur:[],hasInk:false};$('#mt_sig_status').textContent='Signatur: leer';};
+  const getPos=(e)=>{const r=c.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;const y=(e.clientY-r.top)/r.height;return {x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))};};
+  const redraw=()=>{ctx.clearRect(0,0,c.width,c.height);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#111';
+    const drawStroke=(stroke)=>{if(!stroke||stroke.length<2)return;ctx.beginPath();ctx.moveTo(stroke[0].x*c.width, stroke[0].y*c.height);for(let i=1;i<stroke.length;i++)ctx.lineTo(stroke[i].x*c.width, stroke[i].y*c.height);ctx.stroke();};
+    for(const s of dashSig.strokes) drawStroke(s); if(dashSig.cur?.length) drawStroke(dashSig.cur);
+  };
+  c.addEventListener('mousedown',(e)=>{dashSig.drawing=true;dashSig.cur=[getPos(e)];redraw();e.preventDefault();});
+  window.addEventListener('mousemove',(e)=>{if(!dashSig.drawing)return;dashSig.cur.push(getPos(e));dashSig.hasInk=true;redraw();$('#mt_sig_status').textContent='Signatur: OK';});
+  window.addEventListener('mouseup',()=>{if(!dashSig.drawing)return;dashSig.drawing=false;if(dashSig.cur.length>=2)dashSig.strokes.push(dashSig.cur);dashSig.cur=[];redraw();});
+  $('#mt_sig_clear')?.addEventListener('click', clear);
+  clear();
 }
+function sigPadHasInk(){return !!dashSig.hasInk && (dashSig.strokes?.length>0);}
 
-function sigPadHasInk(){
-  try {
-    const jq = getPageJQ();
-    const el = $('#mt_sig_pad');
-    if(!el || !jq || !jq.fn || typeof jq.fn.signature !== 'function') return false;
-    return !jq(el).signature('isEmpty');
-  } catch(e) {
-    return false;
-  }
+/* ---------------- Profiles: per-driver, per-mode ---------------- */
+function profileKey(driverName){return `${state.mode}::${normName(driverName)}`;}
+function persistProfileLastKm(kmDot00){
+  const driver = state.currentDriverName || getSelectedDriverName();
+  const name=(driver||'').trim(); if(!name) return;
+  const profiles=loadProfiles();
+  const key=profileKey(name);
+  if(!profiles[key]) profiles[key]={name,mode:state.mode,fahrzeug:'',lastKm:'',sig:null};
+  profiles[key].lastKm = kmDot00;
+  saveProfiles(profiles);
 }
-
 function saveCurrentSetupToProfile(){
   const driver = state.currentDriverName || getSelectedDriverName();
   const name=(driver||'').trim(); if(!name) return false;
@@ -170,15 +112,7 @@ function saveCurrentSetupToProfile(){
   const key=profileKey(name);
   const otMin=parseOtHours($('#mt_ot_min')?.value);
   const otMax=parseOtHours($('#mt_ot_max')?.value);
-  let sigJson=null;
-  try{
-    const pad=$('#mt_sig_pad');
-    const JQ = UW.jQuery || getPageJQ();
-    if(pad && JQ && JQ.fn && typeof JQ.fn.signature==='function'){
-      sigJson = JQ(pad).signature('toJSON');
-    }
-  }catch{}
-  profiles[key]={name,mode:state.mode,fahrzeug:fzg,lastKm:km,sig:{json:sigJson},otMin,otMax};
+  profiles[key]={name,mode:state.mode,fahrzeug:fzg,lastKm:km,sig:{strokes: dashSig.strokes},otMin,otMax};
   saveProfiles(profiles);
   return true;
 }
@@ -190,20 +124,14 @@ function loadProfileToDashboard(name){
   $('#mt_km').value  = formatDashKmDot00(prof.lastKm || '');
   if($('#mt_ot_min')) $('#mt_ot_min').value = (prof.otMin!=null? String(prof.otMin):'');
   if($('#mt_ot_max')) $('#mt_ot_max').value = (prof.otMax!=null? String(prof.otMax):'');
-  try{
-    const pad=$('#mt_sig_pad');
-    const JQ = UW.jQuery || getPageJQ();
-    if(pad && JQ && JQ.fn && typeof JQ.fn.signature==='function'){
-      const $pad=JQ(pad);
-      $pad.signature('clear');
-      if(prof.sig?.json){
-        $pad.signature('draw', prof.sig.json);
-        $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
-      }else{
-        $('#mt_sig_status').textContent='Signatur: leer';
-      }
+  if(prof.sig?.strokes?.length){
+    dashSig.strokes = JSON.parse(JSON.stringify(prof.sig.strokes));
+    dashSig.cur=[];dashSig.hasInk=true;
+    const c=$('#mt_sig_canvas'); if(c){const ctx=c.getContext('2d');ctx.clearRect(0,0,c.width,c.height);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#111';
+      for(const stroke of dashSig.strokes){if(!stroke||stroke.length<2)continue;ctx.beginPath();ctx.moveTo(stroke[0].x*c.width, stroke[0].y*c.height);for(let i=1;i<stroke.length;i++)ctx.lineTo(stroke[i].x*c.width, stroke[i].y*c.height);ctx.stroke();}
+      $('#mt_sig_status').textContent='Signatur: OK';
     }
-  }catch(e){ console.warn('loadProfileToDashboard signature failed', e); }
+  }
   return true;
 }
 
@@ -256,22 +184,7 @@ GM_addStyle(`
 .mt-sigbox{margin-top:10px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:8px}
 .mt-sigrow{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
 .mt-sigstatus{font-weight:900;color:var(--mt-accent)}
-.mt-canvas{
-  width:100%;
-  height:120px;
-  background:#fff;
-  border-radius:8px;
-  cursor:crosshair;
-  display:block;
-  position:relative;
-  overflow:hidden;
-  touch-action:none;
-}
-.mt-canvas canvas{
-  width:100% !important;
-  height:100% !important;
-  display:block;
-}
+.mt-canvas{width:100%;height:120px;background:#fff;border-radius:8px;cursor:crosshair}
 .mt-pill{padding:4px 8px;border-radius:999px;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);font-weight:900}
 `);
 
@@ -336,7 +249,7 @@ function injectUI(){
           <div class="mt-sigstatus" id="mt_sig_status">Signatur: leer</div>
           <button class="mt-btn danger" id="mt_sig_clear">Clear</button>
         </div>
-        <div id="mt_sig_pad" class="mt-canvas"></div>
+        <canvas id="mt_sig_canvas" class="mt-canvas" width="800" height="240"></canvas>
         <div style="margin-top:6px;opacity:.9;">➡️ Zeichne hier die Signatur für den aktuellen Fahrer.</div>
       </div>
 
@@ -422,68 +335,195 @@ function injectUI(){
 }
 
 /* ---------------- Signature replay into modal ---------------- */
-async function replaySignature(modal, driverName, token){
-  const profiles = loadProfiles();
-  const prof = profiles[profileKey(driverName)];
-  const sigJson = prof?.sig?.json;
+function dispatchMouse(el, type, x, y){
+  const w = (el && el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : undefined;
+  const ev = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    view: w,
+    clientX: x,
+    clientY: y,
+    buttons: (type === 'mouseup') ? 0 : 1
+  });
+  el.dispatchEvent(ev);
+}
 
-  if (!sigJson) {
-    log(`❌ Keine Signatur gespeichert für: ${driverName}`);
-    throw ABORT;
-  }
+function dispatchSigEvent(el, type, x, y){
+  const view = window;
 
-  const JQ = UW.jQuery || getPageJQ();
+  try {
+    const pe = new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      view,
+      clientX: x,
+      clientY: y,
+      pointerId: 1,
+      pointerType: 'mouse',
+      isPrimary: true,
+      buttons: /up$/i.test(type) ? 0 : 1
+    });
+    el.dispatchEvent(pe);
+  } catch {}
+
+  const mouseType =
+    type === 'pointerdown' ? 'mousedown' :
+    type === 'pointermove' ? 'mousemove' :
+    type === 'pointerup'   ? 'mouseup'   : type;
+
+  try {
+    const me = new MouseEvent(mouseType, {
+      bubbles: true,
+      cancelable: true,
+      view,
+      clientX: x,
+      clientY: y,
+      buttons: /up$/i.test(mouseType) ? 0 : 1
+    });
+    el.dispatchEvent(me);
+  } catch {}
+}
+
+function findSignatureParts(modal){
   const wrap =
     modal.querySelector('#signature.kbw-signature') ||
     modal.querySelector('.kbw-signature') ||
     modal.querySelector('#signature');
 
-  if (!wrap || !JQ || !JQ.fn || typeof JQ.fn.signature !== 'function') {
-    log('⚠️ Signaturfeld nicht gefunden');
+  const canvas =
+    modal.querySelector('#signature_canvas') ||
+    modal.querySelector('#signature canvas') ||
+    modal.querySelector('.kbw-signature canvas');
+
+  return { wrap, canvas };
+}
+
+async function waitForSignatureReady(modal, token){
+  // more tolerant than before
+  return await waitFor(() => {
+    const parts = findSignatureParts(modal);
+    const c = parts.canvas;
+    if (!c) return null;
+
+    // only require that canvas exists in DOM
+    if (!document.body.contains(c)) return null;
+
+    // try to allow hidden/reflowing canvas too
+    const r = c.getBoundingClientRect();
+    if ((r.width <= 1 || r.height <= 1) && c.width <= 1 && c.height <= 1) {
+      return null;
+    }
+
+    return parts;
+  }, 12000, token, 200);
+}
+
+async function replaySignature(modal, driverName, token){
+  const profiles = loadProfiles();
+  const prof = profiles[profileKey(driverName)];
+  const sig = prof?.sig;
+
+  if (!sig?.strokes || !sig.strokes.length) {
+    log(`❌ Keine Signatur gespeichert für: ${driverName}`);
     throw ABORT;
   }
 
-  const $wrap = JQ(wrap);
-  const sigInst = $wrap.data('kbwSignature');
+  let parts = await waitForSignatureReady(modal, token);
 
-  if (!sigInst) {
-    log('⚠️ kbwSignature Instanz nicht gefunden');
+  // fallback like old version
+  if (!parts?.canvas) {
+    const fallbackCanvas =
+      modal.querySelector('#signature_canvas') ||
+      modal.querySelector('#signature canvas') ||
+      modal.querySelector('.kbw-signature canvas');
+
+    if (fallbackCanvas) {
+      parts = {
+        wrap:
+          modal.querySelector('#signature.kbw-signature') ||
+          modal.querySelector('.kbw-signature') ||
+          modal.querySelector('#signature'),
+        canvas: fallbackCanvas
+      };
+      log('⚠️ Signaturfeld spät erkannt – Fallback aktiv');
+    }
+  }
+
+  if (!parts?.canvas) {
+    log('⚠️ Signaturfeld nicht bereit');
     throw ABORT;
   }
 
-  await cancellableSleep(150, token);
+  const { wrap, canvas } = parts;
+
+  try { canvas.scrollIntoView({ block: 'center' }); } catch {}
+  await cancellableSleep(350, token);
+
+  let r = canvas.getBoundingClientRect();
+
+  // if layout is still tiny, wait once more instead of aborting immediately
+  if (r.width < 5 || r.height < 5) {
+    await cancellableSleep(500, token);
+    r = canvas.getBoundingClientRect();
+  }
+
+  if (r.width < 5 || r.height < 5) {
+    // use canvas internal dimensions as fallback
+    r = {
+      left: canvas.getBoundingClientRect().left,
+      top: canvas.getBoundingClientRect().top,
+      width: canvas.width || 300,
+      height: canvas.height || 150
+    };
+  }
 
   try {
-    $wrap.signature('clear');
-    await cancellableSleep(80, token);
-    $wrap.signature('draw', sigJson);
-    await cancellableSleep(120, token);
-  } catch (e) {
-    console.error('modal signature draw failed', e);
-    log('❌ Signatur konnte nicht gesetzt werden');
-    throw ABORT;
-  }
-
-  try { if (typeof sigInst._changed === 'function') sigInst._changed(); } catch {}
-  try {
-    wrap.dispatchEvent(new Event('change', { bubbles: true }));
-    wrap.dispatchEvent(new Event('input', { bubbles: true }));
+    if (wrap && window.jQuery && typeof window.jQuery(wrap).signature === 'function') {
+      window.jQuery(wrap).signature('clear');
+      await cancellableSleep(120, token);
+    }
   } catch {}
 
-  await cancellableSleep(120, token);
+  for (const stroke of sig.strokes) {
+    if (!stroke || stroke.length < 2) continue;
 
-  try {
-    if ($wrap.signature('isEmpty')) {
-      log('❌ Signatur blieb leer');
-      throw ABORT;
+    const p0 = stroke[0];
+    const x0 = r.left + p0.x * r.width;
+    const y0 = r.top  + p0.y * r.height;
+
+    // fire both pointer and mouse
+    dispatchSigEvent(canvas, 'pointerdown', x0, y0);
+    dispatchMouse(canvas, 'mousedown', x0, y0);
+    await cancellableSleep(15, token);
+
+    for (let i = 1; i < stroke.length; i++) {
+      const pt = stroke[i];
+      const x = r.left + pt.x * r.width;
+      const y = r.top  + pt.y * r.height;
+
+      dispatchSigEvent(canvas, 'pointermove', x, y);
+      dispatchMouse(canvas, 'mousemove', x, y);
+      await cancellableSleep(10, token);
     }
-  } catch (e) {
-    if (e === ABORT) throw e;
-    log('❌ Signaturprüfung fehlgeschlagen');
-    throw ABORT;
+
+    const plast = stroke[stroke.length - 1];
+    const xl = r.left + plast.x * r.width;
+    const yl = r.top  + plast.y * r.height;
+
+    dispatchSigEvent(canvas, 'pointerup', xl, yl);
+    dispatchMouse(canvas, 'mouseup', xl, yl);
+    await cancellableSleep(60, token);
   }
 
-  log('✅ Signatur gesetzt');
+  try {
+    wrap?.dispatchEvent(new Event('change', { bubbles: true }));
+    wrap?.dispatchEvent(new Event('input', { bubbles: true }));
+    canvas.dispatchEvent(new Event('change', { bubbles: true }));
+    canvas.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch {}
+
+  await cancellableSleep(250, token);
+  log('✅ Signatur sicher gesetzt');
 }
 
 /* ---------------- Plan generators (mode-specific) ---------------- */
