@@ -334,56 +334,7 @@ function injectUI(){
   wireButtons();
 }
 
-/* ---------------- Signature replay into modal ---------------- */
-function dispatchMouse(el, type, x, y){
-  const w = (el && el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : undefined;
-  const ev = new MouseEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    view: w,
-    clientX: x,
-    clientY: y,
-    buttons: (type === 'mouseup') ? 0 : 1
-  });
-  el.dispatchEvent(ev);
-}
-
-function dispatchSigEvent(el, type, x, y){
-  const view = window;
-
-  try {
-    const pe = new PointerEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true,
-      buttons: /up$/i.test(type) ? 0 : 1
-    });
-    el.dispatchEvent(pe);
-  } catch {}
-
-  const mouseType =
-    type === 'pointerdown' ? 'mousedown' :
-    type === 'pointermove' ? 'mousemove' :
-    type === 'pointerup'   ? 'mouseup'   : type;
-
-  try {
-    const me = new MouseEvent(mouseType, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      buttons: /up$/i.test(mouseType) ? 0 : 1
-    });
-    el.dispatchEvent(me);
-  } catch {}
-}
-
+/* ---------------- Signature replay into modal (PLUGIN API VERSION) ---------------- */
 function findSignatureParts(modal){
   const wrap =
     modal.querySelector('#signature.kbw-signature') ||
@@ -398,132 +349,174 @@ function findSignatureParts(modal){
   return { wrap, canvas };
 }
 
-async function waitForSignatureReady(modal, token){
-  // more tolerant than before
-  return await waitFor(() => {
-    const parts = findSignatureParts(modal);
-    const c = parts.canvas;
-    if (!c) return null;
+function getSignatureInstance(modal){
+  try {
+    const $wrap = window.jQuery(modal.querySelector('#signature')) || null;
+    const byId = $wrap && $wrap.length ? $wrap.data('kbwSignature') : null;
+    if (byId) return byId;
+  } catch {}
 
-    // only require that canvas exists in DOM
-    if (!document.body.contains(c)) return null;
-
-    // try to allow hidden/reflowing canvas too
-    const r = c.getBoundingClientRect();
-    if ((r.width <= 1 || r.height <= 1) && c.width <= 1 && c.height <= 1) {
-      return null;
+  try {
+    const el = modal.querySelector('.kbw-signature');
+    if (el && window.jQuery) {
+      const inst = window.jQuery(el).data('kbwSignature');
+      if (inst) return inst;
     }
+  } catch {}
 
-    return parts;
-  }, 12000, token, 200);
+  return null;
+}
+
+function buildPluginJSONFromStoredStrokes(sigInst, strokes){
+  const canvas = sigInst?.canvas;
+  if (!canvas || !strokes?.length) return null;
+
+  const $c = window.jQuery ? window.jQuery(canvas) : null;
+
+  // CSS/display size is what kbw-signature effectively uses visually
+  let cssW = 0;
+  let cssH = 0;
+  let off = { left: 0, top: 0 };
+
+  try {
+    if ($c && $c.length) {
+      cssW = $c.outerWidth() || $c.width() || 0;
+      cssH = $c.outerHeight() || $c.height() || 0;
+      off = $c.offset() || off;
+    }
+  } catch {}
+
+  // Fallbacks
+  if (!cssW || !cssH) {
+    const r = canvas.getBoundingClientRect();
+    cssW = r.width || parseFloat(canvas.getAttribute('width')) || 300;
+    cssH = r.height || parseFloat(canvas.getAttribute('height')) || 150;
+    off = {
+      left: (r.left || 0) + (window.scrollX || window.pageXOffset || 0),
+      top:  (r.top  || 0) + (window.scrollY || window.pageYOffset || 0)
+    };
+  }
+
+  if (!cssW || !cssH) return null;
+
+  const lines = strokes
+    .filter(stroke => Array.isArray(stroke) && stroke.length >= 2)
+    .map(stroke =>
+      stroke.map(pt => {
+        const x = off.left + (pt.x * cssW);
+        const y = off.top  + (pt.y * cssH);
+        return [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+      })
+    );
+
+  return JSON.stringify({ lines });
 }
 
 async function replaySignature(modal, driverName, token){
   const profiles = loadProfiles();
   const prof = profiles[profileKey(driverName)];
-  const sig = prof?.sig;
+  const storedStrokes = prof?.sig?.strokes;
 
-  if (!sig?.strokes || !sig.strokes.length) {
+  if (!storedStrokes || !storedStrokes.length) {
     log(`❌ Keine Signatur gespeichert für: ${driverName}`);
     throw ABORT;
   }
 
-  let parts = await waitForSignatureReady(modal, token);
-
-  // fallback like old version
-  if (!parts?.canvas) {
-    const fallbackCanvas =
-      modal.querySelector('#signature_canvas') ||
-      modal.querySelector('#signature canvas') ||
-      modal.querySelector('.kbw-signature canvas');
-
-    if (fallbackCanvas) {
-      parts = {
-        wrap:
-          modal.querySelector('#signature.kbw-signature') ||
-          modal.querySelector('.kbw-signature') ||
-          modal.querySelector('#signature'),
-        canvas: fallbackCanvas
-      };
-      log('⚠️ Signaturfeld spät erkannt – Fallback aktiv');
-    }
-  }
-
-  if (!parts?.canvas) {
-    log('⚠️ Signaturfeld nicht bereit');
+  const parts = findSignatureParts(modal);
+  if (!parts.wrap || !parts.canvas) {
+    log('⚠️ Signaturfeld nicht gefunden');
     throw ABORT;
   }
 
-  const { wrap, canvas } = parts;
-
-  try { canvas.scrollIntoView({ block: 'center' }); } catch {}
-  await cancellableSleep(350, token);
-
-  let r = canvas.getBoundingClientRect();
-
-  // if layout is still tiny, wait once more instead of aborting immediately
-  if (r.width < 5 || r.height < 5) {
-    await cancellableSleep(500, token);
-    r = canvas.getBoundingClientRect();
+  const sigInst = getSignatureInstance(modal);
+  if (!sigInst) {
+    log('⚠️ kbwSignature Instanz nicht gefunden');
+    throw ABORT;
   }
 
-  if (r.width < 5 || r.height < 5) {
-    // use canvas internal dimensions as fallback
-    r = {
-      left: canvas.getBoundingClientRect().left,
-      top: canvas.getBoundingClientRect().top,
-      width: canvas.width || 300,
-      height: canvas.height || 150
-    };
+  await cancellableSleep(150, token);
+
+  const json = buildPluginJSONFromStoredStrokes(sigInst, storedStrokes);
+  if (!json) {
+    log('⚠️ Signatur JSON konnte nicht erzeugt werden');
+    throw ABORT;
   }
 
   try {
-    if (wrap && window.jQuery && typeof window.jQuery(wrap).signature === 'function') {
-      window.jQuery(wrap).signature('clear');
-      await cancellableSleep(120, token);
+    // safest reset
+    if (typeof sigInst.clear === 'function') {
+      sigInst.clear();
+    } else if (window.jQuery) {
+      window.jQuery(parts.wrap).signature('clear');
     }
   } catch {}
 
-  for (const stroke of sig.strokes) {
-    if (!stroke || stroke.length < 2) continue;
+  await cancellableSleep(80, token);
 
-    const p0 = stroke[0];
-    const x0 = r.left + p0.x * r.width;
-    const y0 = r.top  + p0.y * r.height;
+  let drawOk = false;
 
-    // fire both pointer and mouse
-    dispatchSigEvent(canvas, 'pointerdown', x0, y0);
-    dispatchMouse(canvas, 'mousedown', x0, y0);
-    await cancellableSleep(15, token);
-
-    for (let i = 1; i < stroke.length; i++) {
-      const pt = stroke[i];
-      const x = r.left + pt.x * r.width;
-      const y = r.top  + pt.y * r.height;
-
-      dispatchSigEvent(canvas, 'pointermove', x, y);
-      dispatchMouse(canvas, 'mousemove', x, y);
-      await cancellableSleep(10, token);
+  // preferred: direct instance draw
+  try {
+    if (typeof sigInst.draw === 'function') {
+      sigInst.draw(json);
+      drawOk = true;
     }
+  } catch (e) {
+    console.warn('sigInst.draw failed', e);
+  }
 
-    const plast = stroke[stroke.length - 1];
-    const xl = r.left + plast.x * r.width;
-    const yl = r.top  + plast.y * r.height;
+  // fallback: internal JSON draw
+  if (!drawOk) {
+    try {
+      if (typeof sigInst._drawJSON === 'function') {
+        sigInst._drawJSON(json);
+        drawOk = true;
+      }
+    } catch (e) {
+      console.warn('sigInst._drawJSON failed', e);
+    }
+  }
 
-    dispatchSigEvent(canvas, 'pointerup', xl, yl);
-    dispatchMouse(canvas, 'mouseup', xl, yl);
-    await cancellableSleep(60, token);
+  // fallback: jQuery widget call
+  if (!drawOk) {
+    try {
+      if (window.jQuery && typeof window.jQuery(parts.wrap).signature === 'function') {
+        window.jQuery(parts.wrap).signature('draw', json);
+        drawOk = true;
+      }
+    } catch (e) {
+      console.warn('jQuery signature draw failed', e);
+    }
+  }
+
+  if (!drawOk) {
+    log('❌ Plugin-Draw fehlgeschlagen');
+    throw ABORT;
   }
 
   try {
-    wrap?.dispatchEvent(new Event('change', { bubbles: true }));
-    wrap?.dispatchEvent(new Event('input', { bubbles: true }));
-    canvas.dispatchEvent(new Event('change', { bubbles: true }));
-    canvas.dispatchEvent(new Event('input', { bubbles: true }));
+    if (typeof sigInst._changed === 'function') sigInst._changed();
   } catch {}
 
-  await cancellableSleep(250, token);
-  log('✅ Signatur sicher gesetzt');
+  try {
+    parts.wrap.dispatchEvent(new Event('change', { bubbles: true }));
+    parts.wrap.dispatchEvent(new Event('input', { bubbles: true }));
+    parts.canvas.dispatchEvent(new Event('change', { bubbles: true }));
+    parts.canvas.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch {}
+
+  await cancellableSleep(120, token);
+
+  try {
+    if (typeof sigInst.isEmpty === 'function' && sigInst.isEmpty()) {
+      log('❌ Signatur blieb leer nach Plugin-Draw');
+      throw ABORT;
+    }
+  } catch (e) {
+    if (e === ABORT) throw e;
+  }
+
+  log('✅ Signatur per Plugin API gesetzt');
 }
 
 /* ---------------- Plan generators (mode-specific) ---------------- */
