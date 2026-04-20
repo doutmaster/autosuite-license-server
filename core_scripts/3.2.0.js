@@ -72,23 +72,34 @@ function selectDriverByName(name){const sel = $('#staff_id');if(!sel) return fal
 async function waitForDriverApplied(name, token){const want=normName(name);await waitFor(()=>{const cur=normName(getSelectedDriverName());return (cur && cur===want) ? true : null;}, 8000, token, 150);await cancellableSleep(500, token);}
 
 /* ---------------- Signature pad on DASHBOARD ---------------- */
-let dashSig={drawing:false,strokes:[],cur:[],hasInk:false};
 function setupDashSignaturePad(){
-  const c=$('#mt_sig_canvas'); if(!c) return;
-  const ctx=c.getContext('2d');
-  const clear=()=>{ctx.clearRect(0,0,c.width,c.height);dashSig={drawing:false,strokes:[],cur:[],hasInk:false};$('#mt_sig_status').textContent='Signatur: leer';};
-  const getPos=(e)=>{const r=c.getBoundingClientRect();const x=(e.clientX-r.left)/r.width;const y=(e.clientY-r.top)/r.height;return {x:Math.max(0,Math.min(1,x)),y:Math.max(0,Math.min(1,y))};};
-  const redraw=()=>{ctx.clearRect(0,0,c.width,c.height);ctx.lineWidth=2;ctx.lineCap='round';ctx.strokeStyle='#111';
-    const drawStroke=(stroke)=>{if(!stroke||stroke.length<2)return;ctx.beginPath();ctx.moveTo(stroke[0].x*c.width, stroke[0].y*c.height);for(let i=1;i<stroke.length;i++)ctx.lineTo(stroke[i].x*c.width, stroke[i].y*c.height);ctx.stroke();};
-    for(const s of dashSig.strokes) drawStroke(s); if(dashSig.cur?.length) drawStroke(dashSig.cur);
-  };
-  c.addEventListener('mousedown',(e)=>{dashSig.drawing=true;dashSig.cur=[getPos(e)];redraw();e.preventDefault();});
-  window.addEventListener('mousemove',(e)=>{if(!dashSig.drawing)return;dashSig.cur.push(getPos(e));dashSig.hasInk=true;redraw();$('#mt_sig_status').textContent='Signatur: OK';});
-  window.addEventListener('mouseup',()=>{if(!dashSig.drawing)return;dashSig.drawing=false;if(dashSig.cur.length>=2)dashSig.strokes.push(dashSig.cur);dashSig.cur=[];redraw();});
-  $('#mt_sig_clear')?.addEventListener('click', clear);
-  clear();
+  const el=$('#mt_sig_pad');
+  if(!el || !window.jQuery || typeof window.jQuery.fn.signature!=='function') return;
+  const $pad=window.jQuery(el);
+  try{
+    if(!$pad.data('kbwSignature')){
+      $pad.signature({background:'#ffffff', color:'#000000', thickness:2});
+    }
+    const refreshStatus=()=>{
+      try{ $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK'; }catch{}
+    };
+    refreshStatus();
+    el.addEventListener('mouseup', refreshStatus);
+    el.addEventListener('touchend', refreshStatus);
+    $('#mt_sig_clear')?.addEventListener('click', ()=>{
+      try{ $pad.signature('clear'); $('#mt_sig_status').textContent='Signatur: leer'; }catch{}
+    });
+  }catch(e){
+    console.warn('setupDashSignaturePad failed', e);
+  }
 }
-function sigPadHasInk(){return !!dashSig.hasInk && (dashSig.strokes?.length>0);}
+function sigPadHasInk(){
+  try{
+    const el=$('#mt_sig_pad');
+    if(!el || !window.jQuery || typeof window.jQuery.fn.signature!=='function') return false;
+    return !window.jQuery(el).signature('isEmpty');
+  }catch{return false;}
+}
 
 /* ---------------- Profiles: per-driver, per-mode ---------------- */
 function profileKey(driverName){return `${state.mode}::${normName(driverName)}`;}
@@ -112,7 +123,9 @@ function saveCurrentSetupToProfile(){
   const key=profileKey(name);
   const otMin=parseOtHours($('#mt_ot_min')?.value);
   const otMax=parseOtHours($('#mt_ot_max')?.value);
-  profiles[key]={name,mode:state.mode,fahrzeug:fzg,lastKm:km,sig:{strokes: dashSig.strokes},otMin,otMax};
+  let sigJson=null;
+  try{ const pad=$('#mt_sig_pad'); if(pad && window.jQuery && typeof window.jQuery.fn.signature==='function'){ sigJson = window.jQuery(pad).signature('toJSON'); } }catch{}
+  profiles[key]={name,mode:state.mode,fahrzeug:fzg,lastKm:km,sig:{json:sigJson},otMin,otMax};
   saveProfiles(profiles);
   return true;
 }
@@ -124,14 +137,19 @@ function loadProfileToDashboard(name){
   $('#mt_km').value  = formatDashKmDot00(prof.lastKm || '');
   if($('#mt_ot_min')) $('#mt_ot_min').value = (prof.otMin!=null? String(prof.otMin):'');
   if($('#mt_ot_max')) $('#mt_ot_max').value = (prof.otMax!=null? String(prof.otMax):'');
- if(prof.sig?.json){
   try{
-    window.jQuery('#mt_sig_canvas').signature('draw', prof.sig.json);
-    $('#mt_sig_status').textContent='Signatur: OK';
-  }catch(e){
-    console.warn('Dashboard signature load failed', e);
-  }
-}
+    const pad=$('#mt_sig_pad');
+    if(pad && window.jQuery && typeof window.jQuery.fn.signature==='function'){
+      const $pad=window.jQuery(pad);
+      $pad.signature('clear');
+      if(prof.sig?.json){
+        $pad.signature('draw', prof.sig.json);
+        $('#mt_sig_status').textContent = $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
+      }else{
+        $('#mt_sig_status').textContent='Signatur: leer';
+      }
+    }
+  }catch(e){ console.warn('loadProfileToDashboard signature failed', e); }
   return true;
 }
 
@@ -249,7 +267,7 @@ function injectUI(){
           <div class="mt-sigstatus" id="mt_sig_status">Signatur: leer</div>
           <button class="mt-btn danger" id="mt_sig_clear">Clear</button>
         </div>
-        <canvas id="mt_sig_canvas" class="mt-canvas" width="800" height="240"></canvas>
+        <div id="mt_sig_pad" class="mt-canvas"></div>
         <div style="margin-top:6px;opacity:.9;">➡️ Zeichne hier die Signatur für den aktuellen Fahrer.</div>
       </div>
 
@@ -335,89 +353,6 @@ function injectUI(){
 }
 
 /* ---------------- Signature replay into modal ---------------- */
-function dispatchMouse(el, type, x, y){
-  const w = (el && el.ownerDocument && el.ownerDocument.defaultView) ? el.ownerDocument.defaultView : undefined;
-  const ev = new MouseEvent(type, {
-    bubbles: true,
-    cancelable: true,
-    view: w,
-    clientX: x,
-    clientY: y,
-    buttons: (type === 'mouseup') ? 0 : 1
-  });
-  el.dispatchEvent(ev);
-}
-
-function dispatchSigEvent(el, type, x, y){
-  const view = window;
-
-  try {
-    const pe = new PointerEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      pointerId: 1,
-      pointerType: 'mouse',
-      isPrimary: true,
-      buttons: /up$/i.test(type) ? 0 : 1
-    });
-    el.dispatchEvent(pe);
-  } catch {}
-
-  const mouseType =
-    type === 'pointerdown' ? 'mousedown' :
-    type === 'pointermove' ? 'mousemove' :
-    type === 'pointerup'   ? 'mouseup'   : type;
-
-  try {
-    const me = new MouseEvent(mouseType, {
-      bubbles: true,
-      cancelable: true,
-      view,
-      clientX: x,
-      clientY: y,
-      buttons: /up$/i.test(mouseType) ? 0 : 1
-    });
-    el.dispatchEvent(me);
-  } catch {}
-}
-
-function findSignatureParts(modal){
-  const wrap =
-    modal.querySelector('#signature.kbw-signature') ||
-    modal.querySelector('.kbw-signature') ||
-    modal.querySelector('#signature');
-
-  const canvas =
-    modal.querySelector('#signature_canvas') ||
-    modal.querySelector('#signature canvas') ||
-    modal.querySelector('.kbw-signature canvas');
-
-  return { wrap, canvas };
-}
-
-async function waitForSignatureReady(modal, token){
-  // more tolerant than before
-  return await waitFor(() => {
-    const parts = findSignatureParts(modal);
-    const c = parts.canvas;
-    if (!c) return null;
-
-    // only require that canvas exists in DOM
-    if (!document.body.contains(c)) return null;
-
-    // try to allow hidden/reflowing canvas too
-    const r = c.getBoundingClientRect();
-    if ((r.width <= 1 || r.height <= 1) && c.width <= 1 && c.height <= 1) {
-      return null;
-    }
-
-    return parts;
-  }, 12000, token, 200);
-}
-
 async function replaySignature(modal, driverName, token){
   const profiles = loadProfiles();
   const prof = profiles[profileKey(driverName)];
@@ -433,35 +368,52 @@ async function replaySignature(modal, driverName, token){
     modal.querySelector('.kbw-signature') ||
     modal.querySelector('#signature');
 
-  if (!wrap || !window.jQuery) {
+  if (!wrap || !window.jQuery || typeof window.jQuery.fn.signature!=='function') {
     log('⚠️ Signaturfeld nicht gefunden');
     throw ABORT;
   }
 
   const $wrap = window.jQuery(wrap);
+  const sigInst = $wrap.data('kbwSignature');
 
-  await cancellableSleep(200, token);
+  if (!sigInst) {
+    log('⚠️ kbwSignature Instanz nicht gefunden');
+    throw ABORT;
+  }
+
+  await cancellableSleep(150, token);
 
   try {
     $wrap.signature('clear');
-    await cancellableSleep(100, token);
-
+    await cancellableSleep(80, token);
     $wrap.signature('draw', sigJson);
-
-    await cancellableSleep(200, token);
-
-    if ($wrap.signature('isEmpty')) {
-      log('❌ Signatur blieb leer');
-      throw ABORT;
-    }
-
+    await cancellableSleep(120, token);
   } catch (e) {
-    console.error(e);
+    console.error('modal signature draw failed', e);
     log('❌ Signatur konnte nicht gesetzt werden');
     throw ABORT;
   }
 
-  log('✅ Signatur gesetzt (PLUGIN DIRECT)');
+  try { if (typeof sigInst._changed === 'function') sigInst._changed(); } catch {}
+  try {
+    wrap.dispatchEvent(new Event('change', { bubbles: true }));
+    wrap.dispatchEvent(new Event('input', { bubbles: true }));
+  } catch {}
+
+  await cancellableSleep(120, token);
+
+  try {
+    if ($wrap.signature('isEmpty')) {
+      log('❌ Signatur blieb leer');
+      throw ABORT;
+    }
+  } catch (e) {
+    if (e === ABORT) throw e;
+    log('❌ Signaturprüfung fehlgeschlagen');
+    throw ABORT;
+  }
+
+  log('✅ Signatur gesetzt');
 }
 
 /* ---------------- Plan generators (mode-specific) ---------------- */
