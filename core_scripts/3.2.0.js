@@ -422,75 +422,164 @@ async function replaySignature(modal, driverName, token){
     throw ABORT;
   }
 
-  const parts = findSignatureParts(modal);
-  if (!parts.wrap || !parts.canvas) {
+  const wrap =
+    modal.querySelector('#signature.kbw-signature') ||
+    modal.querySelector('.kbw-signature') ||
+    modal.querySelector('#signature');
+
+  const canvas =
+    modal.querySelector('#signature_canvas') ||
+    modal.querySelector('#signature canvas') ||
+    modal.querySelector('.kbw-signature canvas');
+
+  if (!wrap || !canvas) {
     log('⚠️ Signaturfeld nicht gefunden');
     throw ABORT;
   }
 
-  const sigInst = getSignatureInstance(modal);
+  const $wrap = window.jQuery ? window.jQuery(wrap) : null;
+  const sigInst = $wrap?.data('kbwSignature') || null;
+
   if (!sigInst) {
     log('⚠️ kbwSignature Instanz nicht gefunden');
     throw ABORT;
   }
 
-  await cancellableSleep(150, token);
+  await cancellableSleep(120, token);
 
-  const json = buildPluginJSONFromStoredStrokes(sigInst, storedStrokes);
-  if (!json) {
-    log('⚠️ Signatur JSON konnte nicht erzeugt werden');
+  let off = { left: 0, top: 0 };
+  let cssW = 0;
+  let cssH = 0;
+
+  try {
+    const $c = window.jQuery(canvas);
+    cssW = $c.outerWidth() || $c.width() || 0;
+    cssH = $c.outerHeight() || $c.height() || 0;
+    off = $c.offset() || off;
+  } catch {}
+
+  if (!cssW || !cssH) {
+    const r = canvas.getBoundingClientRect();
+    cssW = r.width || canvas.width || 300;
+    cssH = r.height || canvas.height || 150;
+    off = {
+      left: (r.left || 0) + (window.scrollX || window.pageXOffset || 0),
+      top:  (r.top  || 0) + (window.scrollY || window.pageYOffset || 0)
+    };
+  }
+
+  if (!cssW || !cssH) {
+    log('⚠️ Canvas Maße nicht lesbar');
     throw ABORT;
   }
 
+  // Build plugin-style absolute page coordinates
+  const lines = storedStrokes
+    .filter(stroke => Array.isArray(stroke) && stroke.length >= 2)
+    .map(stroke =>
+      stroke.map(pt => [
+        Math.round((off.left + pt.x * cssW) * 10) / 10,
+        Math.round((off.top  + pt.y * cssH) * 10) / 10
+      ])
+    );
+
+  if (!lines.length) {
+    log('⚠️ Signatur-Linien leer');
+    throw ABORT;
+  }
+
+  const json = JSON.stringify({ lines });
+
+  // 1) clear old
   try {
-    // safest reset
-    if (typeof sigInst.clear === 'function') {
-      sigInst.clear();
-    } else if (window.jQuery) {
-      window.jQuery(parts.wrap).signature('clear');
-    }
+    if (typeof sigInst.clear === 'function') sigInst.clear();
+    else if ($wrap && typeof $wrap.signature === 'function') $wrap.signature('clear');
   } catch {}
 
   await cancellableSleep(80, token);
 
-  let drawOk = false;
+  let ok = false;
 
-  // preferred: direct instance draw
+  // 2) strongest path: write internals directly + refresh
   try {
-    if (typeof sigInst.draw === 'function') {
-      sigInst.draw(json);
-      drawOk = true;
+    sigInst.lines = JSON.parse(json).lines;
+    if (typeof sigInst._refresh === 'function') {
+      sigInst._refresh();
+      ok = true;
     }
   } catch (e) {
-    console.warn('sigInst.draw failed', e);
+    console.warn('direct lines/_refresh failed', e);
   }
 
-  // fallback: internal JSON draw
-  if (!drawOk) {
+  // 3) fallback: internal json draw
+  if (!ok) {
     try {
       if (typeof sigInst._drawJSON === 'function') {
         sigInst._drawJSON(json);
-        drawOk = true;
+        ok = true;
       }
     } catch (e) {
-      console.warn('sigInst._drawJSON failed', e);
+      console.warn('_drawJSON failed', e);
     }
   }
 
-  // fallback: jQuery widget call
-  if (!drawOk) {
+  // 4) fallback: widget draw
+  if (!ok) {
     try {
-      if (window.jQuery && typeof window.jQuery(parts.wrap).signature === 'function') {
-        window.jQuery(parts.wrap).signature('draw', json);
-        drawOk = true;
+      if (typeof sigInst.draw === 'function') {
+        sigInst.draw(json);
+        ok = true;
       }
     } catch (e) {
-      console.warn('jQuery signature draw failed', e);
+      console.warn('draw failed', e);
     }
   }
 
-  if (!drawOk) {
-    log('❌ Plugin-Draw fehlgeschlagen');
+  // 5) fallback: jQuery command
+  if (!ok) {
+    try {
+      if ($wrap && typeof $wrap.signature === 'function') {
+        $wrap.signature('draw', json);
+        ok = true;
+      }
+    } catch (e) {
+      console.warn('jQuery draw failed', e);
+    }
+  }
+
+  // 6) last resort: draw on plugin canvas context directly
+  if (!ok) {
+    try {
+      const ctx = sigInst.ctx || canvas.getContext('2d');
+      if (!ctx) throw new Error('No canvas context');
+
+      const ratioX = (canvas.width  || cssW) / cssW;
+      const ratioY = (canvas.height || cssH) / cssH;
+
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.lineWidth = 2;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#000';
+
+      for (const line of lines) {
+        if (!line || line.length < 2) continue;
+        ctx.beginPath();
+        ctx.moveTo((line[0][0] - off.left) * ratioX, (line[0][1] - off.top) * ratioY);
+        for (let i = 1; i < line.length; i++) {
+          ctx.lineTo((line[i][0] - off.left) * ratioX, (line[i][1] - off.top) * ratioY);
+        }
+        ctx.stroke();
+      }
+
+      sigInst.lines = lines;
+      ok = true;
+    } catch (e) {
+      console.warn('manual canvas draw failed', e);
+    }
+  }
+
+  if (!ok) {
+    log('❌ Signatur konnte nicht gesetzt werden');
     throw ABORT;
   }
 
@@ -499,26 +588,25 @@ async function replaySignature(modal, driverName, token){
   } catch {}
 
   try {
-    parts.wrap.dispatchEvent(new Event('change', { bubbles: true }));
-    parts.wrap.dispatchEvent(new Event('input', { bubbles: true }));
-    parts.canvas.dispatchEvent(new Event('change', { bubbles: true }));
-    parts.canvas.dispatchEvent(new Event('input', { bubbles: true }));
+    wrap.dispatchEvent(new Event('change', { bubbles: true }));
+    wrap.dispatchEvent(new Event('input', { bubbles: true }));
+    canvas.dispatchEvent(new Event('change', { bubbles: true }));
+    canvas.dispatchEvent(new Event('input', { bubbles: true }));
   } catch {}
 
   await cancellableSleep(120, token);
 
   try {
     if (typeof sigInst.isEmpty === 'function' && sigInst.isEmpty()) {
-      log('❌ Signatur blieb leer nach Plugin-Draw');
+      log('❌ Signatur blieb leer');
       throw ABORT;
     }
   } catch (e) {
     if (e === ABORT) throw e;
   }
 
-  log('✅ Signatur per Plugin API gesetzt');
+  log('✅ Signatur gesetzt (Plugin/Canvas Hybrid)');
 }
-
 /* ---------------- Plan generators (mode-specific) ---------------- */
 function genPlanUPS(dateStr){
   const d=deDateStrToDate(dateStr);
