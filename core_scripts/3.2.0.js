@@ -74,24 +74,18 @@ async function waitForDriverApplied(name, token){const want=normName(name);await
 /* ---------------- Signature pad on DASHBOARD ---------------- */
 function setupDashSignaturePad(){
   const el = $('#mt_sig_pad');
-  if(!el) return;
+  if(!el) {
+    console.warn('mt_sig_pad not found');
+    return;
+  }
   if(!window.jQuery || typeof window.jQuery.fn.signature !== 'function'){
-    console.warn('signature plugin missing on dashboard');
+    console.warn('signature plugin missing');
     return;
   }
 
-  const $pad = window.jQuery(el);
-
   try {
-    // hard reset in case script reloaded
-    try {
-      if ($pad.data('kbwSignature')) {
-        $pad.signature('clear');
-      }
-    } catch {}
-
     el.innerHTML = '';
-
+    const $pad = window.jQuery(el);
     $pad.signature({
       background: '#ffffff',
       color: '#000000',
@@ -102,7 +96,9 @@ function setupDashSignaturePad(){
       try {
         $('#mt_sig_status').textContent =
           $pad.signature('isEmpty') ? 'Signatur: leer' : 'Signatur: OK';
-      } catch {}
+      } catch(e) {
+        console.warn(e);
+      }
     };
 
     refreshStatus();
@@ -113,19 +109,15 @@ function setupDashSignaturePad(){
 
     const clearBtn = $('#mt_sig_clear');
     if (clearBtn) {
-      const newBtn = clearBtn.cloneNode(true);
-      clearBtn.parentNode.replaceChild(newBtn, clearBtn);
-
-      newBtn.addEventListener('click', () => {
+      clearBtn.onclick = () => {
         try {
           $pad.signature('clear');
           $('#mt_sig_status').textContent = 'Signatur: leer';
         } catch (e) {
-          console.warn('signature clear failed', e);
+          console.warn('clear failed', e);
         }
-      });
+      };
     }
-
   } catch (e) {
     console.warn('setupDashSignaturePad failed', e);
   }
@@ -136,7 +128,7 @@ function sigPadHasInk(){
     const el = $('#mt_sig_pad');
     if(!el || !window.jQuery) return false;
     return !window.jQuery(el).signature('isEmpty');
-  } catch {
+  } catch(e) {
     return false;
   }
 }
@@ -317,10 +309,10 @@ function injectUI(){
         <div class="mt-field" style="flex:1;min-width:140px"><label>Bis (Std)</label><input id="mt_ot_max" type="number" step="0.5" min="0" placeholder="z.B. 8"></div>
       </div>
 
-      <div class="mt-sigbox">
+           <div class="mt-sigbox">
         <div class="mt-sigrow">
           <div class="mt-sigstatus" id="mt_sig_status">Signatur: leer</div>
-          <button class="mt-btn danger" id="mt_sig_clear">Clear</button>
+          <button class="mt-btn danger" id="mt_sig_clear" type="button">Clear</button>
         </div>
         <div id="mt_sig_pad" class="mt-canvas"></div>
         <div style="margin-top:6px;opacity:.9;">➡️ Zeichne hier die Signatur für den aktuellen Fahrer.</div>
