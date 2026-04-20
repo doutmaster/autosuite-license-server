@@ -141,17 +141,8 @@ async function waitForReady(driverName, token){setReady(false);log(`⏸ Warten a
 
 /* ---------------- Modal helpers ---------------- */
 async function waitForModal(token){
-  return await waitFor(() => {
-    const m = $('#working_time_modal');
-    if (!m) return null;
-
-    const shown =
-      m.classList.contains('show') &&
-      getComputedStyle(m).display !== 'none' &&
-      m.offsetParent !== null;
-
-    return shown ? m : null;
-  }, DELAYS.modal + 4000, token, 200);
+  const r=await waitFor(()=>{const m=$('#working_time_modal');if(!m)return null;const shown=m.classList.contains('show') && getComputedStyle(m).display!=='none';return shown?m:null;}, DELAYS.modal+4000, token, 200);
+  return r||$('#working_time_modal');
 }
 async function waitForModalClosed(token){
   const ok=await waitFor(()=>{const m=$('#working_time_modal');return(!m||!m.classList.contains('show')||getComputedStyle(m).display==='none')?true:null;}, DELAYS.modalClose+4000, token, 150);
